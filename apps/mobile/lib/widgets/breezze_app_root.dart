@@ -47,7 +47,6 @@ class _BreezzeAppRootState extends ConsumerState<BreezzeAppRoot> with WidgetsBin
     _container!.read(playerControllerProvider.notifier).attachEngine(_audioEngine!);
     unawaited(_startBackgroundAudio());
     unawaited(migrateJsonStoresToDrift(_container!));
-    unawaited(_container!.read(authSessionProvider.notifier).restoreSession());
     ref.listenManual(authSessionProvider, (prev, next) {
       final before = prev is AuthSignedIn ? prev.userId : null;
       final after = next is AuthSignedIn ? next.userId : null;
@@ -69,6 +68,9 @@ class _BreezzeAppRootState extends ConsumerState<BreezzeAppRoot> with WidgetsBin
         _checkOnboardingNeeded(_accountVersion);
       }
     });
+    // Register the auth transition listener before applying the restored
+    // Supabase session: restoreSession may complete synchronously.
+    unawaited(_container!.read(authSessionProvider.notifier).restoreSession());
   }
 
   @override

@@ -18,8 +18,45 @@ if [[ -n "${QA_PREVIEW_API_ORIGIN:-}" ]]; then
   live_args+=(--dart-define=QA_LIVE_PREVIEW=true "--dart-define=BREEZZE_API_URL=$QA_PREVIEW_API_ORIGIN")
 fi
 if [[ "$device" != emulator-* ]]; then
-  flutter test -d "$device" integration_test/listener_runtime_test.dart --reporter expanded "${live_args[@]}"
-  exit
+  # iOS simulator launch can hang after Xcode says "build done".
+  # Bound the actual test process and report a diagnostic rather than
+  # consuming the entire macOS runner allocation without useful logs.
+  set +e
+  python3 - "$device" "${live_args[@]}" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+device, *extra = sys.argv[1:]
+command = [
+    'flutter', 'test', '-d', device,
+    'integration_test/listener_runtime_test.dart',
+    '--reporter', 'expanded', *extra,
+]
+print('QA_IOS_SIMULATOR_START ' + device, flush=True)
+proc = subprocess.Popen(command, start_new_session=True)
+try:
+    code = proc.wait(timeout=14 * 60)
+except subprocess.TimeoutExpired:
+    print('QA_IOS_SIMULATOR_TIMEOUT: flutter test did not finish in 14 minutes',
+          flush=True)
+    os.killpg(proc.pid, signal.SIGTERM)
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait()
+    sys.exit(124)
+sys.exit(code)
+PY
+  result=$?
+  set -e
+  if (( result != 0 )); then
+    echo "QA_IOS_SIMULATOR_FAILED with exit code $result"
+    xcrun simctl list devices booted || true
+  fi
+  exit "$result"
 fi
 
 log=$(mktemp)

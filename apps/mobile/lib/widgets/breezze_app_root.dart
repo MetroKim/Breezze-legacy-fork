@@ -135,6 +135,12 @@ class _BreezzeAppRootState extends ConsumerState<BreezzeAppRoot> with WidgetsBin
     // MaterialApp existed, leaving login/register without app navigation,
     // theme and inherited Material widgets.
     return MaterialApp(
+      // Reset the entire Navigator tree when the authenticated identity
+      // changes. A Back gesture after sign-out must never reveal a
+      // previously pushed Library, Account, or playback screen.
+      key: ValueKey<String>(auth is AuthSignedIn
+          ? 'signed-in:${auth.userId}'
+          : 'authentication-required'),
       title: 'Breezze',
       debugShowCheckedModeBanner: false,
       themeMode: ref.watch(appearanceProvider).valueOrNull ?? ThemeMode.system,

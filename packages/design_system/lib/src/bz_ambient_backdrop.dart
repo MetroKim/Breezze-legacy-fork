@@ -11,16 +11,24 @@ import 'bz_theme.dart';
 class BzAmbientBackdrop extends StatelessWidget {
   final Widget child;
   final String? artworkUrl;
+  final Color? artworkAccent;
 
   const BzAmbientBackdrop({
     super.key,
     required this.child,
     this.artworkUrl,
+    this.artworkAccent,
   });
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).bz;
+    final theme = Theme.of(context);
+    final colors = theme.bz;
+    final seeded = bzColorsFromBrandSeed(
+      brightness: theme.brightness, seedColor: artworkAccent,
+    );
+    final tint = artworkAccent != null && seeded.accent != colors.accent
+        ? seeded.accent : null;
 
     return Stack(
       fit: StackFit.expand,
@@ -32,6 +40,22 @@ class BzAmbientBackdrop extends StatelessWidget {
             fit: BoxFit.cover,
             alignment: Alignment.topCenter,
             errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+          ),
+        if (tint != null)
+          IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    tint.withValues(alpha: 0.16),
+                    tint.withValues(alpha: 0.02),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+            ),
           ),
         BackdropFilter(
           filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),

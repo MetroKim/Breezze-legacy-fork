@@ -63,7 +63,8 @@ An ARL cookie, YouTube watch URL, extraction tool or third-party preview is **no
 ### 2. Brand and adaptive theme — partial
 
 - [x] Shared design-system tokens and Breezze-specific branded UI foundations exist.
-- [ ] Verify exact approved black/white launcher SVG/PNG assets and source files, then implement optional icon/album palette extraction with contrast-safe fallback. A monochrome logo often yields no saturated accent; never force a garish generated hue.
+- [x] Wire the bundled launcher icon to palette extraction and use the contrast-checked seeded accent; preserve monochrome for achromatic artwork. Added adaptive theme unit coverage.
+- [ ] Audit high-contrast/reduced-motion themes and asset variants on physical supported devices; per-album accent remains separate from the global launcher palette.
 - [ ] Test dark/light/system/high-contrast themes, dynamic type, accessible focus and reduced motion on supported platforms.
 
 ### 3. Listener shell — partial
@@ -83,7 +84,10 @@ An ARL cookie, YouTube watch URL, extraction tool or third-party preview is **no
 
 - [x] Android and iOS emulators verified local download, offline audio decode, pause/seek/resume, video handoff and native Deezer **preview** decode at PR #3 head; Android also exercised OS media pause/play.
 - [x] Test backend with disposable licensed fixture: byte-range full stream, session controls, download grant, lease revalidation and revocation.
-- [ ] Verify multiple adjacent full tracks, true gapless transition timing, skip/repeat/shuffle, failed source retry, network changes and grant-expiry recovery.
+- [x] Implement local-only native gapless playlists (Android/iOS/macOS) with one just_audio decoder, native index updates and safe queue-edit fallback; unit and simulator tests added, **new-commit CI pending**.
+- [ ] Measure actual audible silence at two adjacent local-track boundaries and validate long playlist/battery behavior on real devices.
+- [ ] For full remote tracks, implement queue grants with individually validated licensing/session lifecycle before enabling native gapless; keep current per-track backend resolution until proven safe.
+- [ ] Verify skip/repeat/shuffle transitions, failed source retry, network changes and grant-expiry recovery.
 - [ ] Test physical lock-screen, headset/Bluetooth, phone call, and audio-focus behavior. Emulators cannot certify these.
 - [ ] Do not claim gapless merely because `just_audio` has playlist APIs; time the end-to-start output gap with independently granted sources.
 
@@ -96,7 +100,9 @@ An ARL cookie, YouTube watch URL, extraction tool or third-party preview is **no
 ### 7. Cache and offline hierarchy — partial
 
 - [x] Local downloads with rights/owner metadata and backend lease checks have automated coverage.
-- [ ] Add **authorized** metadata/source prefetch for up to three queue entries; key by listener, territory, recording edition, quality and rights expiry.
+- [x] Fail closed on invalid, expired or preview-only download grants; require HTTPS and a bounded offline lease, and reject downloads after account switches.
+- [x] Prevent cache corruption by resuming partial bytes only with a matching server-issued encoded-asset version; invalidate completed bytes on version mismatch. Without a stable version, restart the transfer safely.
+- [ ] Add **authorized** metadata/source prefetch for up to three queue entries; key by listener, territory, recording edition, quality and rights expiry. Implement an asset-version response from the licensed backend media catalog so versioned byte-range resumption can be used reliably in production.
 - [ ] Never persist unauthorized provider audio or share signed user-specific URLs in edge caches. Validate range resumption, evictions, corrupted assets, revocations, airplane-mode behavior and account isolation.
 - [ ] Do not claim arbitrary streamed audio is offline-playable after half its bytes arrive: codec/container boundaries, explicit caching rights and verified chunk indexes are prerequisites.
 

@@ -113,7 +113,13 @@ void main() {
 
     final tracks = await library.list(ownerId: 'user-1');
 
-    expect(tracks.single.rightsExpiresAtUtc, expiry);
+    final saved = tracks.single;
+    expect(saved.rightsExpiresAtUtc, expiry);
+    final renewed = expiry.add(const Duration(days: 1));
+    await library.updateOfflineLease(saved.trackId, renewed);
+    expect((await library.list(ownerId: 'user-1')).single.rightsExpiresAtUtc, renewed);
+    await library.remove(saved.trackId);
+    expect(await library.list(ownerId: 'user-1'), isEmpty);
   });
 
   test('does not expose legacy metadata without an owner', () async {

@@ -458,6 +458,9 @@ class PlayerController extends Notifier<PlayerState> {
   Future<void> resume() async {
     final engine = _engine;
     if (engine == null || state.playbackState != PlaybackState.paused) return;
+    final requestId = _requestGeneration;
+    bool isCurrentResume() =>
+        _isCurrentRequest(requestId) && identical(_engine, engine);
     final activeSource = _activeSource;
     final currentTrack = state.currentTrack;
     if (activeSource != null && activeSource.isExpired && currentTrack != null) {
@@ -477,35 +480,40 @@ class PlayerController extends Notifier<PlayerState> {
       try {
         await (_activeSessionClient ?? _sessionClient).resume(sessionId);
       } catch (_) {
-        await _closePlaybackSession();
+        if (isCurrentResume()) await _closePlaybackSession();
         return;
       }
     }
+    if (!isCurrentResume()) return;
     _machine.dispatch(PlayPressed());
     try {
       await _serializeEngineOperation(() async {
+        if (!isCurrentResume()) return;
         unawaited(engine.play().catchError(
           (Object error, StackTrace stackTrace) {
+            if (!isCurrentResume()) return;
             final currentTrackId = state.currentTrack?.id;
             if (currentTrackId != null) _scrobbles.onStop(currentTrackId);
             unawaited(_closePlaybackSession());
             _machine.dispatch(SourceResolutionFailed(
               'RESUME_FAILED',
-              requestId: _machine.activeRequestId,
+              requestId: requestId,
             ));
           },
         ));
       });
-      if (sessionId != null && state.playbackState == PlaybackState.playing) {
+      if (isCurrentResume() && sessionId != null &&
+          state.playbackState == PlaybackState.playing) {
         _startHeartbeatTimer();
       }
     } catch (_) {
+      if (!isCurrentResume()) return;
       await _closePlaybackSession();
       final currentTrackId = state.currentTrack?.id;
       if (currentTrackId != null) _scrobbles.onStop(currentTrackId);
       _machine.dispatch(SourceResolutionFailed(
         'RESUME_FAILED',
-        requestId: _machine.activeRequestId,
+        requestId: requestId,
       ));
     }
   }
@@ -558,7 +566,15 @@ class PlayerController extends Notifier<PlayerState> {
   }
 
   Future<bool> _tryDeezerPreview(TrackInfo track, int requestId) async {
-    if (!isYouTubeSongId(track.id) || !_isCurrentRequest(requestId)) return false;
+    if (!_isCurrentRequest(requestId)) return false;
+    if (isDeezerTrackId(track.id)) {
+      await _playDeezerPreview(TrackInfo(
+        id: 'bz:deezer_preview:${track.id.split(':').last}',
+        title: track.title, artist: track.artist, artworkUrl: track.artworkUrl,
+      ));
+      return true;
+    }
+    if (!isYouTubeSongId(track.id)) return false;
     final title = track.title;
     final artist = track.artist;
     if (title == null || artist == null || title.isEmpty || artist.isEmpty) return false;
@@ -809,7 +825,7 @@ class PlayerController extends Notifier<PlayerState> {
       // Keep the legacy reporter only for local/offline media, which has no
       // server playback session.
       if (source.sessionId == null && !info.id.startsWith('device:') &&
-          !isDeezerPreview(info.id) && !isYouTubeSongId(info.id)) {
+          !isDeezerPreview(info.id) && !isExternalRecordingId(info.id)) {
         unawaited(
           ref.read(playHistoryReporterProvider)(info).catchError((_) {}),
         );

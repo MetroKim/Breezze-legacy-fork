@@ -212,7 +212,7 @@ class DownloadsLibrary {
         final expiryRaw = raw['rightsExpiresAtUtc'] as String?;
         final expiry = expiryRaw == null ? null : DateTime.tryParse(expiryRaw);
         tracks.add(DownloadedTrack(
-          trackId: entry.uri.pathSegments.last,
+          trackId: entry.uri.pathSegments.lastWhere((part) => part.isNotEmpty),
           catalogTrackId: catalogTrackId,
           ownerId: ownerId,
           rightsExpiresAtUtc: expiry?.toUtc(),

@@ -204,12 +204,12 @@ class LiveResolver implements PlaybackResolver {
     if (api.accessToken == null) return null;
 
     try {
-      final youtubeSong = isYouTubeSongId(track.id);
-      final catalogId = youtubeSong ? null : await _resolveCatalogId(api, track);
-      if (!youtubeSong && catalogId == null) return null;
+      final externalRecording = isExternalRecordingId(track.id);
+      final catalogId = externalRecording ? null : await _resolveCatalogId(api, track);
+      if (!externalRecording && catalogId == null) return null;
 
       final providerIdentity = _providerIdentity(track.id);
-      if (!youtubeSong && providerIdentity != null) {
+      if (!externalRecording && providerIdentity != null) {
         final session = await api.startPlaybackSession(
           providerId: providerIdentity.$1,
           providerTrackId: providerIdentity.$2,
@@ -239,7 +239,7 @@ class LiveResolver implements PlaybackResolver {
       final preferences = await DownloadPreferencesStore().load();
       final session = await api.startPlaybackSession(
         trackId: catalogId,
-        externalTrackId: youtubeSong ? track.id : null,
+        externalTrackId: externalRecording ? track.id : null,
         requestedQuality: preferences.streamingQuality,
       );
       final sessionId = session['id'] as String?;

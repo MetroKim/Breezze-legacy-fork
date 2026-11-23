@@ -13,7 +13,7 @@ import { IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Min } from 'class-v
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { PlaybackResolveService } from './playback-resolve.service';
-import { PlaybackSessionService } from './playback-session.service';
+import { externalRecordingId, PlaybackSessionService } from './playback-session.service';
 
 export class ProviderResolveDto {
   @IsString()
@@ -31,7 +31,7 @@ export class ProviderResolveDto {
 }
 
 export class StartPlaybackSessionDto {
-  @IsOptional() @Matches(/^bz:youtube_music:[A-Za-z0-9_-]{11}$/)
+  @IsOptional() @Matches(externalRecordingId)
   externalTrackId?: string;
   @IsOptional() @IsUUID() trackId?: string;
   @IsOptional() @IsIn(['AAC_128', 'AAC_256', 'LOSSLESS', 'HI_RES'])

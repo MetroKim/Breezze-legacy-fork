@@ -37,6 +37,7 @@ class _FakeEngine implements AudioEngineAdapter {
   bool failPlay = false;
   bool failSeek = false;
   Completer<void>? firstPrepare;
+  Completer<void>? nextPlay;
 
   @override
   Future<void> prepare(PlayableSource source) async {
@@ -53,6 +54,9 @@ class _FakeEngine implements AudioEngineAdapter {
     if (failPlay) throw StateError('play failed');
     playCount++;
     states.add(PlaybackState.playing);
+    final pending = nextPlay;
+    nextPlay = null;
+    if (pending != null) await pending.future;
   }
 
   @override
@@ -313,6 +317,28 @@ void main() {
 
     expect(container.read(playerControllerProvider).playbackState,
         PlaybackState.failed);
+  });
+
+  test('a late resume failure does not stop a newly selected track', () async {
+    final player = container.read(playerControllerProvider.notifier);
+    final first = player.playTrack(trackId: 'track-a');
+    resolver.complete('track-a');
+    await first;
+    await player.pause();
+
+    final pendingResume = Completer<void>();
+    engine.nextPlay = pendingResume;
+    await player.resume();
+
+    final second = player.playTrack(trackId: 'track-b');
+    resolver.complete('track-b');
+    await second;
+    pendingResume.completeError(StateError('old playback failed'));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(container.read(playerControllerProvider).currentTrack?.id, 'track-b');
+    expect(container.read(playerControllerProvider).playbackState,
+        PlaybackState.playing);
   });
 
 }

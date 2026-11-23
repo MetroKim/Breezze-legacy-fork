@@ -96,6 +96,39 @@ class _FakeEngine implements AudioEngineAdapter {
   }
 }
 
+class _FakeGaplessEngine extends _FakeEngine implements GaplessLocalQueueEngine {
+  final StreamController<int?> indices = StreamController<int?>.broadcast();
+  List<PlayableSource> playlist = [];
+  final List<int> seekIndices = [];
+
+  @override
+  bool get supportsGaplessLocalFiles => true;
+
+  @override
+  Stream<int?> get currentIndexStream => indices.stream;
+
+  @override
+  Future<void> prepareLocalPlaylist(
+    List<PlayableSource> sources, {
+    required int initialIndex,
+  }) async {
+    playlist = sources;
+    indices.add(initialIndex);
+  }
+
+  @override
+  Future<void> skipToIndex(int index) async {
+    seekIndices.add(index);
+    indices.add(index);
+  }
+
+  @override
+  Future<void> dispose() async {
+    await indices.close();
+    await super.dispose();
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -115,6 +148,72 @@ void main() {
   tearDown(() async {
     container.dispose();
     await engine.dispose();
+  });
+
+  test('local queue transitions natively without re-preparing the decoder',
+      () async {
+    final native = _FakeGaplessEngine();
+    final active = ProviderContainer(overrides: [
+      playbackResolverProvider.overrideWithValue(resolver),
+    ]);
+    final controller = active.read(playerControllerProvider.notifier);
+    controller.attachEngine(native);
+
+    await controller.playTrack(
+      trackId: 'local-a',
+      queue: const [
+        TrackInfo(id: 'local-a', title: 'A', localFilePath: '/tmp/a.m4a'),
+        TrackInfo(id: 'local-b', title: 'B', localFilePath: '/tmp/b.m4a'),
+      ],
+    );
+
+    expect(native.playlist.map((s) => s.trackId).toList(),
+        ['local-a', 'local-b']);
+    expect(native.prepared, isEmpty);
+    expect(native.playCount, 1);
+    native.indices.add(1);
+    await Future<void>.delayed(Duration.zero);
+    expect(active.read(playerControllerProvider).currentTrack?.id, 'local-b');
+    expect(controller.queue.current?.trackId, 'local-b');
+    expect(active.read(playerControllerProvider).playbackState,
+        PlaybackState.playing);
+
+    await controller.previous();
+    expect(native.seekIndices, [0]);
+    expect(active.read(playerControllerProvider).currentTrack?.id, 'local-a');
+    await controller.next();
+    expect(native.seekIndices, [0, 1]);
+    expect(active.read(playerControllerProvider).currentTrack?.id, 'local-b');
+
+    await controller.stop();
+    active.dispose();
+    await native.dispose();
+  });
+
+  test('editing a native local playlist uses the safe single-source path',
+      () async {
+    final native = _FakeGaplessEngine();
+    final active = ProviderContainer(overrides: [
+      playbackResolverProvider.overrideWithValue(resolver),
+    ]);
+    final controller = active.read(playerControllerProvider.notifier);
+    controller.attachEngine(native);
+    await controller.playTrack(
+      trackId: 'local-a',
+      queue: const [
+        TrackInfo(id: 'local-a', localFilePath: '/tmp/a.m4a'),
+        TrackInfo(id: 'local-b', localFilePath: '/tmp/b.m4a'),
+      ],
+    );
+    controller.playLast(const TrackInfo(
+      id: 'local-c', localFilePath: '/tmp/c.m4a',
+    ));
+    await Future<void>.delayed(Duration.zero);
+    expect(native.prepared, ['local-a']);
+    expect(controller.queue.upNext.map((e) => e.trackId),
+        ['local-b', 'local-c']);
+    active.dispose();
+    await native.dispose();
   });
 
   test('late resolver response cannot replace the latest selected track',

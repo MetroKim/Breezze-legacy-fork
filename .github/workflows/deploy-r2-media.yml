@@ -1,0 +1,78 @@
+name: Deploy Breezze private R2 media
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: breezze-r2-media-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy rights-gated Cloudflare R2 Worker
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: infra/cloudflare/media-worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install and test media Worker
+        run: |
+          npm install --no-audit --no-fund
+          npm run check
+          npm test
+      - name: Validate account and HMAC configuration
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          MEDIA_SIGNING_KEY: ${{ secrets.BREEZZE_MEDIA_SIGNING_KEY }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test "${#MEDIA_SIGNING_KEY}" -ge 32
+      - name: Deploy Worker with private bucket and HMAC secret
+        id: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          MEDIA_SIGNING_KEY: ${{ secrets.BREEZZE_MEDIA_SIGNING_KEY }}
+          BREEZZE_WEB_ALLOWED_ORIGINS: ${{ vars.BREEZZE_WEB_ALLOWED_ORIGINS }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$MEDIA_SIGNING_KEY" | npx wrangler secret put MEDIA_SIGNING_KEY
+          deploy_args=()
+          if [ -n "${BREEZZE_WEB_ALLOWED_ORIGINS:-}" ]; then
+            deploy_args+=(--var "WEB_ALLOWED_ORIGINS:$BREEZZE_WEB_ALLOWED_ORIGINS")
+          fi
+          deploy_output="$(npx wrangler deploy "${deploy_args[@]}" 2>&1)"
+          printf '%s\n' "$deploy_output"
+          worker_url="$(printf '%s\n' "$deploy_output" | grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' | tail -n 1 || true)"
+          test -n "$worker_url"
+          echo "worker_url=$worker_url" >> "$GITHUB_OUTPUT"
+      - name: Verify private worker never serves unsigned audio
+        env:
+          WORKER_URL: ${{ steps.worker.outputs.worker_url }}
+          BREEZZE_WEB_ALLOWED_ORIGINS: ${{ vars.BREEZZE_WEB_ALLOWED_ORIGINS }}
+        run: |
+          set -euo pipefail
+          status="$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' "$WORKER_URL/audio/test-track/AAC_256")"
+          test "$status" = "403"
+          status="$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' "$WORKER_URL/")"
+          test "$status" = "404"
+          if [ -n "${BREEZZE_WEB_ALLOWED_ORIGINS:-}" ]; then
+            origin="${BREEZZE_WEB_ALLOWED_ORIGINS%%,*}"
+            curl --fail --silent --show-error -o /dev/null -D /tmp/r2-cors-headers -X OPTIONS \
+              "$WORKER_URL/audio/test-track/AAC_256" \
+              -H "Origin: $origin" \
+              -H "Access-Control-Request-Method: GET" \
+              -H "Access-Control-Request-Headers: range"
+            grep -Fiq "access-control-allow-origin: $origin" /tmp/r2-cors-headers
+          fi
+          echo "R2 Worker private/unsigned and CORS smoke checks passed."

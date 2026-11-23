@@ -31,6 +31,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   List<TrackInfo> _madeForYou = [];
   Map<String, dynamic>? _replay;
   bool _loading = true;
+  bool _storageUnavailable = false;
   int _refreshVersion = 0;
 
   @override
@@ -43,9 +44,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final version = ++_refreshVersion;
     final auth = ref.read(authSessionProvider);
     final ownerId = auth is AuthSignedIn ? auth.userId : 'guest';
-    final recent = await _recent.load(ownerId: ownerId);
+    // Storage failures must not leave Home showing an endless skeleton.
+    var storageUnavailable = false;
+    List<RecentEntry> recent;
+    try {
+      recent = await _recent.load(ownerId: ownerId);
+    } catch (_) {
+      recent = <RecentEntry>[];
+      storageUnavailable = true;
+    }
     if (!mounted || version != _refreshVersion) return;
-    final favorites = await ref.read(favoritesStoreProvider).load(ownerId: ownerId);
+    List<FavoriteTrack> favorites;
+    try {
+      favorites = await ref.read(favoritesStoreProvider).load(ownerId: ownerId);
+    } catch (_) {
+      favorites = <FavoriteTrack>[];
+      storageUnavailable = true;
+    }
     Map<String, dynamic>? replay;
     var madeForYou = <TrackInfo>[];
     if (!mounted || version != _refreshVersion) return;
@@ -107,6 +122,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       _favorites = favorites;
       _madeForYou = madeForYou;
       _replay = replay;
+      _storageUnavailable = storageUnavailable;
       _loading = false;
     });
   }
@@ -184,6 +200,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         _favorites = [];
         _madeForYou = [];
         _replay = null;
+        _storageUnavailable = false;
         _loading = true;
       });
       _refresh();
@@ -274,6 +291,29 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           // Hero greeting (§4.1): time-based, local only.
           Text(_greeting, style: theme.textTheme.displayMedium),
           const SizedBox(height: 24),
+          if (!_loading && _storageUnavailable) ...[
+            Semantics(
+              liveRegion: true,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Saved music could not be fully loaded on this device.',
+                        style: theme.textTheme.bodyMedium
+                            ?.copyWith(color: theme.bzText2),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _refresh,
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
           if (_loading) ...[
             const BzSkeleton(width: 172, height: 16, radius: 5),
             const SizedBox(height: 16),

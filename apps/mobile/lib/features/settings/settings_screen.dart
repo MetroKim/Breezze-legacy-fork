@@ -7,6 +7,7 @@ import '../../app/appearance_controller.dart';
 import '../../app/search_history_store.dart';
 import '../../core/auth/auth_session.dart';
 import 'account_screen.dart';
+import 'account_sign_out.dart';
 import 'help_support_screen.dart';
 import '../notifications/notifications_screen.dart';
 import '../player/sleep_timer_controller.dart';
@@ -126,7 +127,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _section(theme, 'Account', [
             ListTile(
               leading: BzBnoteMark(size: 28, color: theme.bzText1),
-              title: Text(email ?? 'Not signed in'),
+              title: Text(email ?? 'Sign in to Breezze'),
               subtitle: Text('Breezze — free for everyone',
                   style: theme.textTheme.bodySmall),
               onTap: () => Navigator.of(context).push(
@@ -135,7 +136,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
             ListTile(
               leading: BzSvgIcon(name: 'user-round'),
-              title: const Text('Account details and sessions'),
+              title: Text(email == null ? 'Sign in or create account' : 'Account details and sessions'),
               trailing: BzSvgIcon(name: 'chevron-right', color: theme.bzText2),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const AccountScreen()),
@@ -149,13 +150,35 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 MaterialPageRoute(builder: (_) => const NotificationsScreen()),
               ),
             ),
-            ListTile(
-              leading: BzSvgIcon(name: 'logout'),
-              title: const Text('Sign out'),
-              onTap: () {
-                ref.read(authSessionProvider.notifier).signOut();
-              },
-            ),
+            if (auth is AuthSignedIn)
+              ListTile(
+                leading: const BzSvgIcon(name: 'settings'),
+                title: const Text('Password recovery'),
+                subtitle: const Text('Managed by Supabase Auth'),
+                trailing: const BzSvgIcon(name: 'chevron-right'),
+                onTap: () async {
+                  try {
+                    await ref.read(authSessionProvider.notifier)
+                        .requestPasswordReset(auth.email);
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('If your account exists, check your email for a reset link.'),
+                    ));
+                  } catch (_) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('Password recovery is temporarily unavailable.'),
+                    ));
+                  }
+                },
+              ),
+            if (auth is AuthSignedIn)
+              ListTile(
+                leading: const BzSvgIcon(name: 'logout'),
+                title: const Text('Sign out'),
+                subtitle: const Text('This device or all devices'),
+                onTap: () => confirmBreezzeSignOut(context, ref),
+              ),
           ]),
           _section(theme, 'Audio Quality', [
             if (!_preferencesLoaded)
@@ -172,7 +195,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     DropdownMenuItem(value: 'AAC_128', child: Text('Standard')),
                     DropdownMenuItem(value: 'AAC_256', child: Text('High')),
                     DropdownMenuItem(value: 'LOSSLESS', child: Text('Lossless')),
-                    DropdownMenuItem(value: 'HI_RES', child: Text('Hi-Res')),
                   ],
                   onChanged: (value) {
                     if (value != null) {

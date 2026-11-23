@@ -1,21 +1,11 @@
-# Breezze Cloudflare media edge
+# Breezze Cloudflare R2 media Worker
 
-This Worker is a private R2 playback gateway for Breezze-owned or separately rights-cleared catalog audio. It does not accept user uploads or ingest third-party provider streams.
+This Worker retrieves **Breezze-owned or explicitly rights-cleared** private audio from the Cloudflare R2 bucket `breezze-media`. The connected bucket is provisioned in EEUR Standard storage and has no public R2 URL.
 
-## Provisioning
+The `MEDIA_BUCKET` binding is declared in `wrangler.toml`. Configure the `MEDIA_SIGNING_KEY` Worker secret to match the NestJS backend's `MEDIA_SIGNING_KEY`. Set NestJS `CDN_BASE_URL` to the HTTPS origin of the deployed `breezze-media` Worker after verification.
 
-1. Create a private Cloudflare R2 bucket named `breezze-media`.
-2. Authenticate Wrangler and set `MEDIA_SIGNING_KEY` with at least 32 random bytes using `npx wrangler secret put MEDIA_SIGNING_KEY`.
-3. Deploy with `npx wrangler deploy` and attach the media hostname.
-4. Configure the API signing key and CDN base URL to match the Worker.
+Authorization remains in NestJS's rights/territory service. The Worker only accepts time-limited HMAC-signed `GET` and `HEAD` for `/audio/{trackId}/{variant}`, supporting byte-range seeking and cache-safe responses. An unsigned link cannot read objects. Never expose an R2.dev public bucket URL or R2 credentials in Flutter.
 
-Keep the bucket private. Never expose R2 credentials to the mobile client. Playback URLs are short-lived bearer capabilities and are returned only after the API authorizes the track's rights and territory.
+The worker does not ingest Deezer/YouTube/Audius audio, accept uploads or grant music rights. Supabase is reserved for account identity, private application data and optional avatars; it is **not** the full-track media store.
 
-## Object and request contract
-
-- Objects use `audio/{canonicalTrackId}/{variant}`.
-- The Worker accepts signed `GET` and `HEAD` requests and supports byte ranges for seeking.
-- Responses are `private, no-store`; signed URLs must not enter shared caches.
-- No upload, quarantine, artist-submission, or media-transcoding endpoint exists in the listener app.
-
-Provider-hosted audio must be delivered by the approved provider directly to the client. This R2 bucket is only for Breezze-owned or explicitly rights-cleared audio. Provisioning and deployment remain account-side steps.
+To deploy, use the reviewed workflow in `.github/workflows/deploy-r2-media.yml` after the shared signing key, Cloudflare API token and account ID have been securely configured and smoke-tested. Keep the current Railway API and its database in place until migration acceptance.

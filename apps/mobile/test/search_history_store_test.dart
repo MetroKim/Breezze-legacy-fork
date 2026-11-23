@@ -73,4 +73,37 @@ void main() {
 
     expect(await store.load(), isEmpty);
   });
+  test('browser search history is isolated by account and survives re-open',
+      () async {
+    final values = <String, String>{};
+    Future<String?> read(String key) async => values[key];
+    Future<void> write(String key, String value) async {
+      values[key] = value;
+    }
+
+    SearchHistoryStore forOwner(String ownerId) => SearchHistoryStore(
+          ownerId: ownerId,
+          readBrowserValue: read,
+          writeBrowserValue: write,
+        );
+
+    await forOwner('alice').add('Bongo Flava');
+    expect(await forOwner('bob').load(), isEmpty);
+    await forOwner('bob').add('Amapiano');
+    expect(await forOwner('alice').load(), ['Bongo Flava']);
+    expect(await forOwner('bob').load(), ['Amapiano']);
+    await forOwner('alice').clear();
+    expect(await forOwner('alice').load(), isEmpty);
+    expect(await forOwner('bob').load(), ['Amapiano']);
+  });
+
+  test('corrupt browser history does not block Search', () async {
+    final store = SearchHistoryStore(
+      ownerId: 'test',
+      readBrowserValue: (_) async => '{invalid',
+      writeBrowserValue: (_, __) async {},
+    );
+    expect(await store.load(), isEmpty);
+  });
+
 }

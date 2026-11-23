@@ -1,6 +1,8 @@
 export interface Env {
   API_ORIGIN?: string;
   EDGE_SHARED_SECRET: string;
+  // Exact HTTPS/loopback browser origins, configured per deployment.
+  WEB_ALLOWED_ORIGINS?: string;
 }
 
 const PUBLIC_CATALOG_PATH =
@@ -14,6 +16,60 @@ function jsonError(status: number, code: string): Response {
     { statusCode: status, error: code },
     { status, headers: { 'Cache-Control': 'no-store' } },
   );
+}
+
+
+// Browser origin allowlisting is distinct from server-to-server edge auth.
+// Never use '*' with credentialed requests or trust a client-supplied origin.
+function browserOrigin(request: Request, env: Env): string | null {
+  const origin = request.headers.get('Origin');
+  if (!origin) return null;
+  const allowed = (env.WEB_ALLOWED_ORIGINS ?? '')
+    .split(',').map((entry) => entry.trim()).filter(Boolean);
+  return allowed.includes(origin) ? origin : null;
+}
+
+function withBrowserCors(response: Response, request: Request, env: Env): Response {
+  const headers = new Headers(response.headers);
+  const vary = headers.get('Vary');
+  if (request.headers.has('Origin')) {
+    const varyParts = (vary ?? '').split(',').map((item) => item.trim()).filter(Boolean);
+    if (!varyParts.some((item) => item.toLowerCase() === 'origin')) {
+      headers.set('Vary', [...varyParts, 'Origin'].join(', '));
+    }
+  }
+  const origin = browserOrigin(request, env);
+  if (origin) {
+    headers.set('Access-Control-Allow-Origin', origin);
+    headers.set('Access-Control-Allow-Credentials', 'true');
+    headers.set('Access-Control-Expose-Headers', 'x-request-id, x-breezze-edge-cache, etag, content-range');
+  } else {
+    headers.delete('Access-Control-Allow-Origin');
+    headers.delete('Access-Control-Allow-Credentials');
+    headers.delete('Access-Control-Expose-Headers');
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function corsPreflight(request: Request, env: Env): Response | null {
+  if (request.method !== 'OPTIONS' || !request.headers.has('Access-Control-Request-Method')) {
+    return null;
+  }
+  const origin = browserOrigin(request, env);
+  const method = request.headers.get('Access-Control-Request-Method')?.toUpperCase();
+  if (!origin || !method || !['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    return jsonError(403, 'CORS_ORIGIN_OR_METHOD_DENIED');
+  }
+  const response = withBrowserCors(new Response(null, { status: 204 }), request, env);
+  response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE');
+  response.headers.set('Access-Control-Allow-Headers', 'authorization, content-type');
+  response.headers.set('Access-Control-Max-Age', '600');
+  response.headers.set('Cache-Control', 'private, no-store');
+  return response;
 }
 
 function isPublicCatalogRequest(request: Request, url: URL): boolean {
@@ -157,7 +213,9 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext): Promis
 }
 
 export default {
-  fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    return handle(request, env, ctx);
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const preflight = corsPreflight(request, env);
+    if (preflight) return preflight;
+    return withBrowserCors(await handle(request, env, ctx), request, env);
   },
 };

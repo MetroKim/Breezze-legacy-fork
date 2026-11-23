@@ -40,6 +40,18 @@ export class LoginDto {
   password!: string;
 }
 
+export class ChangePasswordDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(128)
+  currentPassword!: string;
+
+  @IsString()
+  @MinLength(12)
+  @MaxLength(128)
+  newPassword!: string;
+}
+
 export class PasswordReauthDto {
   @IsString()
   @MinLength(1)
@@ -75,17 +87,6 @@ export class RefreshDto {
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
-  @Post('register')
-  register(@Body() dto: RegisterDto) {
-    return this.auth.register(dto.email, dto.password, dto.displayName);
-  }
-
-  @Post('login')
-  @HttpCode(HttpStatus.OK)
-  login(@Body() dto: LoginDto) {
-    return this.auth.login(dto.email, dto.password);
-  }
-
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   refresh(@Body() dto: RefreshDto) {
@@ -96,6 +97,14 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   logout(@Body() dto: RefreshDto) {
     return this.auth.logout(dto.refreshToken);
+  }
+
+  @Post('logout-all')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  async logoutAllDevices(@CurrentUser() userId: string) {
+    await this.auth.revokeAllSessions(userId);
+    return { revoked: true };
   }
 
   @Post('mfa/setup')

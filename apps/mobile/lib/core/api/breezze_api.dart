@@ -9,10 +9,14 @@ import 'package:http/http.dart' as http;
 /// No secrets: the backend is Breezze's own; JWT access + refresh tokens
 /// are stored by the session controller, never hardcoded.
 class BreezzeApi {
-  BreezzeApi({required this.baseUrl, http.Client? client})
-      : _client = client ?? http.Client();
+  BreezzeApi({
+    required this.baseUrl,
+    http.Client? client,
+    this.requestTimeout = const Duration(seconds: 10),
+  }) : _client = client ?? http.Client();
 
   final String baseUrl;
+  final Duration requestTimeout;
   final http.Client _client;
 
   String? accessToken;
@@ -64,13 +68,14 @@ class BreezzeApi {
           _uri(path),
           headers: _headers,
           body: jsonEncode(body),
-        );
+        ).timeout(requestTimeout);
     var response = await send();
     if (response.statusCode == 401 &&
         path != '/auth/refresh' &&
         path != '/auth/login' &&
         path != '/auth/register' &&
-        !path.startsWith('/auth/social/') &&
+        !path.startsWith('/auth/supabase/') &&
+        path != '/auth/logout' &&
         !path.startsWith('/auth/mfa/') &&
         onUnauthorized != null &&
         await onUnauthorized!()) {
@@ -81,7 +86,7 @@ class BreezzeApi {
 
   Future<Map<String, dynamic>> _get(String path) async {
     Future<http.Response> send() =>
-        _client.get(_uri(path), headers: _headers).timeout(const Duration(seconds: 10));
+        _client.get(_uri(path), headers: _headers).timeout(requestTimeout);
     var response = await send();
     if (response.statusCode == 401 &&
         onUnauthorized != null &&
@@ -98,7 +103,7 @@ class BreezzeApi {
           _uri(path),
           headers: _headers,
           body: jsonEncode(body),
-        );
+        ).timeout(requestTimeout);
     var response = await send();
     if (response.statusCode == 401 &&
         onUnauthorized != null &&
@@ -116,7 +121,7 @@ class BreezzeApi {
           _uri(path),
           headers: _headers,
           body: body == null ? null : jsonEncode(body),
-        );
+        ).timeout(requestTimeout);
     var response = await send();
     if (response.statusCode == 401 &&
         onUnauthorized != null &&
@@ -271,27 +276,6 @@ class BreezzeApi {
     return AuthResponse.fromJson(data);
   }
 
-  /// Universal system-browser OAuth pairing: same backend on Android,
-  /// iOS, macOS, Windows, Linux and web. The app never receives provider
-  /// access tokens and the browser never receives Breezze session tokens.
-  Future<Map<String, dynamic>> socialProviders() =>
-      _get('/auth/social/providers');
-
-  Future<Map<String, dynamic>> startSocialLogin(String provider) {
-    if (provider != 'google' && provider != 'apple') {
-      throw ArgumentError.value(provider, 'provider');
-    }
-    return _post('/auth/social/$provider/start', {});
-  }
-
-  Future<Map<String, dynamic>> pollSocialLogin({
-    required String flowId,
-    required String secret,
-  }) => _post('/auth/social/poll', {
-    'id': flowId,
-    'secret': secret,
-  });
-
   Future<AuthResponse> login(String email, String password) async {
     final data = await _post('/auth/login', {
       'email': email,
@@ -413,6 +397,38 @@ class BreezzeApi {
 
   Future<void> logout(String refreshToken) async {
     await _post('/auth/logout', {'refreshToken': refreshToken});
+  }
+
+  Future<void> logoutAllSessions() async {
+    await _post('/auth/logout-all', const <String, dynamic>{});
+  }
+
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    await _post('/auth/password/change', {
+      'currentPassword': currentPassword,
+      'newPassword': newPassword,
+    });
+  }
+
+  Future<AuthResponse> exchangeSupabaseSession(String accessToken) async {
+    final response = await _post('/auth/supabase/exchange', {'accessToken': accessToken});
+    return AuthResponse.fromJson(response);
+  }
+
+  Future<AuthResponse> claimSupabaseLegacyAccount({
+    required String accessToken,
+    required String email,
+    required String legacyPassword,
+  }) async {
+    final response = await _post('/auth/supabase/claim', {
+      'accessToken': accessToken,
+      'email': email,
+      'legacyPassword': legacyPassword,
+    });
+    return AuthResponse.fromJson(response);
   }
 
   Future<Map<String, dynamic>> me() async => _get('/auth/me');

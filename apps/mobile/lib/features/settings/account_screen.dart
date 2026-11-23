@@ -3,6 +3,9 @@ import 'package:breezze_design_system/breezze_design_system.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/auth/auth_session.dart';
+import '../authentication/auth_screen.dart';
+import 'account_sign_out.dart';
+import 'help_support_screen.dart';
 import '../../widgets/bz_brand_icons.dart';
 
 class AccountScreen extends ConsumerStatefulWidget {
@@ -41,6 +44,12 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
   }
 
   Future<void> _load() async {
+    final initialAuth = ref.read(authSessionProvider);
+    if (initialAuth is! AuthSignedIn) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
+    final ownerId = initialAuth.userId;
     setState(() {
       _loading = true;
       _error = null;
@@ -48,7 +57,9 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
     try {
       final api = ref.read(authSessionProvider.notifier).api;
       final results = await Future.wait([api.profile(), api.sessions()]);
-      if (!mounted) return;
+      final latestAuth = ref.read(authSessionProvider);
+      if (!mounted || latestAuth is! AuthSignedIn ||
+          latestAuth.userId != ownerId) return;
       final profile = results[0] as Map<String, dynamic>;
       final preference = profile['preference'] is Map
           ? Map<String, dynamic>.from(profile['preference'] as Map)
@@ -67,7 +78,9 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
         _loading = false;
       });
     } catch (_) {
-      if (!mounted) return;
+      final latestAuth = ref.read(authSessionProvider);
+      if (!mounted || latestAuth is! AuthSignedIn ||
+          latestAuth.userId != ownerId) return;
       setState(() {
         _loading = false;
         _error = 'Account details could not be loaded. Check your connection and retry.';
@@ -142,51 +155,84 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
     }
   }
 
-  Future<void> _deleteAccount() async {
-    final password = TextEditingController();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete your account?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('This permanently deletes your Breezze account and associated server data. This action cannot be undone.'),
-            const SizedBox(height: 12),
-            TextField(
-              controller: password,
-              obscureText: true,
-              decoration: const InputDecoration(labelText: 'Confirm with your password'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete account')),
-        ],
-      ),
-    );
-    final value = password.text;
-    password.dispose();
-    if (confirmed != true || value.isEmpty) return;
-    setState(() {
-      _saving = true;
-      _error = null;
-    });
+  Future<void> _requestPasswordReset() async {
+    final email = _email;
+    if (_saving || email == null || email.isEmpty) return;
+    setState(() { _saving = true; _error = null; });
     try {
-      await ref.read(authSessionProvider.notifier).api.deleteAccount(password: value);
-      await ref.read(authSessionProvider.notifier).signOut();
-      if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
+      await ref.read(authSessionProvider.notifier).requestPasswordReset(email);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('If your account exists, check your email for a password reset link.'),
+      ));
     } catch (_) {
-      if (mounted) setState(() => _error = 'Account deletion failed. Check your password and try again.');
+      if (mounted) setState(() => _error = 'Password recovery is temporarily unavailable.');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
+  Widget _signedOutGateway(ThemeData theme) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Account')),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(24, 36, 24, 36),
+          children: [
+            Center(child: BzBnoteMark(size: 72, color: theme.bzText1)),
+            const SizedBox(height: 24),
+            Text('Your music, your account',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.headlineMedium),
+            const SizedBox(height: 12),
+            Text('Sign in to sync your library and playlists across devices. '
+                'Breezze also lets you explore the public catalogue without an account.',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(color: theme.bzText2)),
+            const SizedBox(height: 28),
+            FilledButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const AuthScreen())),
+              child: const Text('Sign in'),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const AuthScreen(startInRegisterMode: true))),
+              child: const Text('Create account'),
+            ),
+            const SizedBox(height: 16),
+            TextButton(
+              onPressed: () => Navigator.of(context).maybePop(),
+              child: const Text('Continue without an account'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    ref.listen<AuthState>(authSessionProvider, (previous, next) {
+      final before = previous is AuthSignedIn ? previous.userId : null;
+      final after = next is AuthSignedIn ? next.userId : null;
+      if (before == after) return;
+      if (next is AuthSignedIn) {
+        _load();
+      } else {
+        setState(() {
+          _email = null;
+          _sessions = const [];
+          _error = null;
+          _loading = false;
+        });
+      }
+    });
     final theme = Theme.of(context);
+    if (ref.watch(authSessionProvider) is! AuthSignedIn) {
+      return _signedOutGateway(theme);
+    }
     return Scaffold(
       appBar: AppBar(
         title: const Text('Account'),
@@ -272,6 +318,16 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                   child: Text(_saving ? 'Saving…' : 'Save profile'),
                 ),
                 const SizedBox(height: 28),
+                Text('SECURITY', style: theme.textTheme.labelLarge),
+                const SizedBox(height: 8),
+                ListTile(
+                  leading: const BzSvgIcon(name: 'settings'),
+                  title: const Text('Reset password'),
+                  subtitle: const Text('Secure recovery through Supabase'),
+                  trailing: const BzSvgIcon(name: 'chevron-right'),
+                  onTap: _saving ? null : _requestPasswordReset,
+                ),
+                const SizedBox(height: 28),
                 Text('ACTIVE SESSIONS', style: theme.textTheme.labelLarge),
                 const SizedBox(height: 8),
                 if (_sessions.isEmpty)
@@ -288,10 +344,20 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                       ),
                     ),
                 const SizedBox(height: 28),
+                ListTile(
+                  leading: const BzSvgIcon(name: 'logout'),
+                  title: const Text('Sign out'),
+                  subtitle: const Text('This device or all devices'),
+                  onTap: _saving ? null : () => confirmBreezzeSignOut(context, ref),
+                ),
                 OutlinedButton(
-                  onPressed: _saving ? null : _deleteAccount,
+                  onPressed: _saving ? null : () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const HelpSupportScreen(),
+                    ),
+                  ),
                   style: OutlinedButton.styleFrom(foregroundColor: theme.colorScheme.error),
-                  child: const Text('Delete account'),
+                  child: const Text('Request account deletion'),
                 ),
               ],
             ),

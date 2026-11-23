@@ -1,5 +1,6 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
+import * as argon2 from 'argon2';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma.service';
 import { AuthService } from './auth.service';
@@ -35,6 +36,10 @@ describe('AuthService refresh-token rotation', () => {
       create: jest.fn().mockResolvedValue({ id: 'refresh-2' }),
     };
     prisma = {
+      user: {
+        findUnique: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
       refreshToken: {
         findUnique: jest.fn(),
         findFirst: jest.fn(),
@@ -42,7 +47,7 @@ describe('AuthService refresh-token rotation', () => {
         findMany: jest.fn(),
       },
       $transaction: jest.fn((callback: (tx: any) => unknown) =>
-        callback({ refreshToken: transactionRefreshToken }),
+        callback({ refreshToken: transactionRefreshToken, user: prisma.user }),
       ),
     };
     jwt = { signAsync: jest.fn().mockResolvedValue('new-access-token') };
@@ -130,6 +135,55 @@ describe('AuthService refresh-token rotation', () => {
     await expect(service.revokeSession('user-1', 'foreign-session'))
       .rejects.toThrow('SESSION_NOT_FOUND');
     expect(prisma.refreshToken.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('revokes all active sessions for the requesting user without touching other accounts', async () => {
+    await service.revokeAllSessions('user-1');
+    expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: { userId: 'user-1', revokedAt: null },
+      data: { revokedAt: expect.any(Date) },
+    });
+  });
+
+  it('changes a password using Argon2id and revokes every session for the account', async () => {
+    const oldHash = await argon2.hash('old-password-strong', {
+      type: argon2.argon2id, memoryCost: 4096, timeCost: 2, parallelism: 1,
+    });
+    prisma.user.findUnique.mockResolvedValue({ passwordHash: oldHash });
+    await service.changePassword('user-1', 'old-password-strong', 'new-password-strong');
+    expect(prisma.user.updateMany).toHaveBeenCalledWith({
+      where: { id: 'user-1', passwordHash: oldHash },
+      data: { passwordHash: expect.any(String) },
+    });
+    const storedHash = prisma.user.updateMany.mock.calls[0][0].data.passwordHash;
+    expect(storedHash).toContain('$argon2id$');
+    expect(await argon2.verify(storedHash, 'new-password-strong')).toBe(true);
+    expect(transactionRefreshToken.updateMany).toHaveBeenCalledWith({
+      where: { userId: 'user-1', revokedAt: null },
+      data: { revokedAt: expect.any(Date) },
+    });
+  });
+
+  it('rejects an incorrect current password without changing the account', async () => {
+    const oldHash = await argon2.hash('old-password-strong', {
+      type: argon2.argon2id, memoryCost: 4096, timeCost: 2, parallelism: 1,
+    });
+    prisma.user.findUnique.mockResolvedValue({ passwordHash: oldHash });
+    await expect(service.changePassword('user-1', 'bad-password', 'new-password-strong'))
+      .rejects.toBeInstanceOf(UnauthorizedException);
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+    expect(transactionRefreshToken.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('prevents simultaneous stale-password changes', async () => {
+    const oldHash = await argon2.hash('old-password-strong', {
+      type: argon2.argon2id, memoryCost: 4096, timeCost: 2, parallelism: 1,
+    });
+    prisma.user.findUnique.mockResolvedValue({ passwordHash: oldHash });
+    prisma.user.updateMany.mockResolvedValue({ count: 0 });
+    await expect(service.changePassword('user-1', 'old-password-strong', 'new-password-strong'))
+      .rejects.toBeInstanceOf(UnauthorizedException);
+    expect(transactionRefreshToken.updateMany).not.toHaveBeenCalled();
   });
 
   it('revokes the complete family when logging out', async () => {

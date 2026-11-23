@@ -1,5 +1,13 @@
 # Breezze Product Experience Plan
 
+> **Current release scope:** The audio-first execution plan supersedes older
+> aspirational sections below. The live client has **four** destinations:
+> **Home, Browse, Library, Search**. Radio, an artist portal, billing,
+> subscriptions and social features are not release requirements.
+> Catalog metadata is not a music license. See
+> [the verification register](audit/RELEASE_EXECUTION_STATUS.md) for
+> independently verified functionality and outstanding blockers.
+
 This specification applies the supplied music-app feature inventory to Breezze's independent product identity and the existing Flutter-first architecture. It describes target behavior; a listed capability is not considered shipped until its real data source, persistence, permissions, and tests exist.
 
 ## Product principles

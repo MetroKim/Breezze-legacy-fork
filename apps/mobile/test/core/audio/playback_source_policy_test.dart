@@ -6,7 +6,7 @@ void main() {
     test('discovery-only IDs never enter the native audio queue', () {
       for (final id in [
         'bz:youtube_music:abc',
-        'bz:deezer:123',
+        'bz:deezer:invalid',
         'bz:soundcloud:456',
         'bz:audius:retired',
         'bz:apple_catalog:789',
@@ -19,6 +19,7 @@ void main() {
 
     test('local or backend tracks and approved Jamendo can request playback', () {
       expect(canQueueTrackId('catalog-uuid'), isTrue);
+      expect(canQueueTrackId('bz:deezer:123'), isTrue);
       expect(canQueueTrackId('bz:deezer_preview:42'), isTrue);
       expect(canQueueTrackId('bz:deezer_preview:nope'), isFalse);
       expect(canRequestOfflineDownload('bz:deezer_preview:42'), isFalse);

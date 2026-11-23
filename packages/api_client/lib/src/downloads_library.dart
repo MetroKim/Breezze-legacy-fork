@@ -29,6 +29,13 @@ class DownloadsLibrary {
     required this.lyrics,
   });
 
+  // R2 returns strong quoted ETags for each stored media version.
+  String? _strongEtagVersion(String? value) {
+    if (value == null) return null;
+    final match = RegExp(r'^"([A-Za-z0-9._:-]{1,120})"$').firstMatch(value.trim());
+    return match == null ? null : 'etag:${match.group(1)}';
+  }
+
   Directory _dirFor(String trackId) {
     final safeTrackId = trackId.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
     if (safeTrackId.isEmpty || safeTrackId == '.' || safeTrackId == '..') {
@@ -47,10 +54,12 @@ class DownloadsLibrary {
     required String ownerId,
     required String catalogTrackId,
     DateTime? rightsExpiresAtUtc,
+    String? assetVersion,
     void Function(double progress)? onProgress,
     DownloadCancellation? cancellation,
   }) async {
     final dir = _dirFor(track.id);
+    var observedAssetVersion = assetVersion;
     try {
       await dir.create(recursive: true);
 
@@ -58,8 +67,66 @@ class DownloadsLibrary {
       // download-rights decision. Never extract media directly from a
       // metadata/search provider in the client.
       final audioFile = File('${dir.path}/audio.m4a');
+      if (await audioFile.exists()) {
+        // A completed cache is no more trustworthy than a partial one.
+        // An updated master, codec or revoked asset invalidates old bytes.
+        final metaFile = File('${dir.path}/meta.json');
+        String? cachedVersion;
+        try {
+          if (await metaFile.exists()) {
+            final data = jsonDecode(await metaFile.readAsString());
+            if (data is Map) cachedVersion = data['assetVersion'] as String?;
+          }
+        } catch (_) {
+          // Corrupt metadata is never proof of a matching audio master.
+        }
+        var reusable = assetVersion != null &&
+            RegExp(r'^[A-Za-z0-9._:-]{1,128}$').hasMatch(assetVersion) &&
+            cachedVersion == assetVersion;
+        // When the API supplies no master revision, compare the current
+        // object ETag through the already-authorized signed media URL.
+        if (!reusable && assetVersion == null &&
+            cachedVersion != null && cachedVersion.startsWith('etag:')) {
+          final client = HttpClient();
+          try {
+            final request = await client.openUrl('HEAD', Uri.parse(downloadUrl));
+            final response = await request.close();
+            final version = _strongEtagVersion(response.headers.value('etag'));
+            reusable = response.statusCode == HttpStatus.ok &&
+                version != null && version == cachedVersion;
+            await response.drain<void>();
+          } catch (_) {
+            reusable = false;
+          } finally {
+            client.close(force: true);
+          }
+        }
+        if (!reusable) {
+          await audioFile.delete();
+        } else {
+          observedAssetVersion = cachedVersion;
+        }
+      }
       if (!await audioFile.exists()) {
         final partialFile = File('${dir.path}/audio.part');
+        final versionFile = File(partialFile.path + '.version');
+        // Partial bytes are only valid for the same encoded asset version.
+        // If no stable version exists, restart instead of splicing masters.
+        final validVersion = assetVersion != null &&
+            RegExp(r'^[A-Za-z0-9._:-]{1,128}$').hasMatch(assetVersion);
+        final storedVersion = await versionFile.exists()
+            ? await versionFile.readAsString() : null;
+        final sameVersion = storedVersion != null &&
+            (validVersion ? storedVersion == assetVersion :
+                assetVersion == null && storedVersion.startsWith('etag:'));
+        if (!sameVersion && await partialFile.exists()) {
+          await partialFile.delete();
+        }
+        if (validVersion) {
+          await versionFile.writeAsString(assetVersion);
+        } else if (!sameVersion && await versionFile.exists()) {
+          await versionFile.delete();
+        }
         final client = HttpClient();
         try {
           final existingBytes =
@@ -67,8 +134,29 @@ class DownloadsLibrary {
           final request = await client.getUrl(Uri.parse(downloadUrl));
           if (existingBytes > 0) {
             request.headers.set('range', 'bytes=$existingBytes-');
+            if (assetVersion == null && storedVersion != null &&
+                storedVersion.startsWith('etag:')) {
+              request.headers.set(
+                'if-range', '"${storedVersion.substring(5)}"',
+              );
+            }
           }
           final response = await request.close();
+          final responseVersion = _strongEtagVersion(
+            response.headers.value('etag'),
+          );
+          if (existingBytes > 0 && assetVersion == null &&
+              response.statusCode == HttpStatus.partialContent &&
+              responseVersion != storedVersion) {
+            await response.drain<void>();
+            if (await partialFile.exists()) await partialFile.delete();
+            if (await versionFile.exists()) await versionFile.delete();
+            throw const HttpException('resumed_asset_etag_mismatch');
+          }
+          if (assetVersion == null && responseVersion != null) {
+            observedAssetVersion = responseVersion;
+            await versionFile.writeAsString(responseVersion);
+          }
           final resumes = existingBytes > 0 &&
               response.statusCode == HttpStatus.partialContent;
           if (response.statusCode != HttpStatus.ok && !resumes) {
@@ -113,6 +201,7 @@ class DownloadsLibrary {
             throw const HttpException('authorized_download_incomplete');
           }
           await partialFile.rename(audioFile.path);
+          if (await versionFile.exists()) await versionFile.delete();
         } catch (_) {
           // Keep the partial asset. The next authorized attempt can request
           // the remaining byte range instead of downloading from zero.
@@ -165,6 +254,7 @@ class DownloadsLibrary {
         'artist': track.artist,
         'ownerId': ownerId,
         'catalogTrackId': catalogTrackId,
+        'assetVersion': observedAssetVersion,
         'rightsExpiresAtUtc': rightsExpiresAtUtc?.toUtc().toIso8601String(),
       }));
 
@@ -212,7 +302,7 @@ class DownloadsLibrary {
         final expiryRaw = raw['rightsExpiresAtUtc'] as String?;
         final expiry = expiryRaw == null ? null : DateTime.tryParse(expiryRaw);
         tracks.add(DownloadedTrack(
-          trackId: entry.uri.pathSegments.last,
+          trackId: entry.uri.pathSegments.lastWhere((part) => part.isNotEmpty),
           catalogTrackId: catalogTrackId,
           ownerId: ownerId,
           rightsExpiresAtUtc: expiry?.toUtc(),
@@ -236,6 +326,8 @@ class DownloadsLibrary {
   Future<void> removePartial(String trackId) async {
     final partial = File('${_dirFor(trackId).path}/audio.part');
     if (await partial.exists()) await partial.delete();
+    final version = File(partial.path + '.version');
+    if (await version.exists()) await version.delete();
   }
 
   Future<void> remove(String trackId) async {

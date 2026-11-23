@@ -1,6 +1,6 @@
 # Breezze
 
-Breezze is a free, listener-first music app built with one Flutter/Dart application codebase. It has five primary destinations: Home, Browse, Radio, Library and Search. Downloads live inside Library. There is no artist portal, artist upload workflow, subscription, membership, billing or paywall.
+Breezze is a free, listener-first music app built with one Flutter/Dart application codebase. It has four primary destinations: Home, Browse, Library and Search. Downloads live inside Library. There is no artist portal, artist upload workflow, subscription, membership, billing or paywall.
 
 ## Current client capabilities
 
@@ -13,7 +13,7 @@ Breezze is a free, listener-first music app built with one Flutter/Dart applicat
 - Local playlists with account-scoped storage and optional backend synchronization.
 - Offline downloads through backend authorization and signed media URLs.
 - LRCLIB lyrics lookup with track-change-safe loading.
-- Radio station and schedule information; live station playback remains disabled until station streams are connected to the shared audio engine.
+- Radio is outside the current audio-first release scope; metadata or background modules do not imply a playable radio feature.
 - Responsive layouts for compact phones through expanded desktop windows.
 - Original Breezze SVG interface icons, light/dark themes and reduced-motion-aware loading states.
 

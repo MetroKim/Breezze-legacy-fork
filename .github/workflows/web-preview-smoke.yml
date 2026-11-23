@@ -68,6 +68,25 @@ jobs:
           echo "Verified Breezze Flutter web-server is running and serving bootstrap assets"
           tail -n 30 "$RUNNER_TEMP/breezze-web.log"
 
+      - name: Verify actual mobile UI rendering in Chromium
+        run: |
+          set -euo pipefail
+          BREEZZE_BROWSER="$(command -v google-chrome || command -v chromium || command -v chromium-browser || true)"
+          if [[ -z "$BREEZZE_BROWSER" ]]; then
+            echo "Chromium/Chrome not installed on GitHub runner" >&2
+            exit 1
+          fi
+          npm install --prefix "$RUNNER_TEMP/breezze-browser" playwright-core --no-audit --no-fund
+          BREEZZE_BROWSER="$BREEZZE_BROWSER" node apps/mobile/tool/smoke_web_ui.cjs
+
+      - name: Publish rendered mobile screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: breezze-mobile-ui-${{ github.run_id }}
+          path: ${{ runner.temp }}/breezze-mobile-preview.png
+          if-no-files-found: warn
+
       - name: Publish startup logs on failure
         if: failure()
         uses: actions/upload-artifact@v4

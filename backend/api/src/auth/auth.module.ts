@@ -3,9 +3,9 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
-import { SocialAuthController } from './social-auth.controller';
-import { SocialAuthService } from './social-auth.service';
 import { JwtStrategy } from './jwt.strategy';
+import { SupabaseAuthBridge } from './supabase-auth.bridge';
+import { SupabaseAuthController } from './supabase-auth.controller';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
 @Module({
@@ -15,8 +15,8 @@ import { JwtAuthGuard } from './jwt-auth.guard';
       secret: process.env.JWT_SECRET ?? 'dev-only-secret-change-me',
     }),
   ],
-  controllers: [AuthController, SocialAuthController],
-  providers: [AuthService, SocialAuthService, JwtStrategy, JwtAuthGuard],
+  controllers: [AuthController, SupabaseAuthController],
+  providers: [AuthService, SupabaseAuthBridge, JwtStrategy, JwtAuthGuard],
   exports: [AuthService, JwtAuthGuard],
 })
 export class AuthModule {}

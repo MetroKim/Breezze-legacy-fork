@@ -45,6 +45,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   List<FavoriteTrack> _favorites = [];
   List<SavedAlbum> _albums = [];
   var _loading = true;
+  bool _storageUnavailable = false;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
@@ -53,13 +55,45 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   }
 
   Future<void> _refresh() async {
+    final generation = ++_loadGeneration;
     final auth = ref.read(authSessionProvider);
     final ownerId = auth is AuthSignedIn ? auth.userId : 'guest';
-    final favorites = await ref.read(favoritesStoreProvider).load(ownerId: ownerId);
-    var playlists = await _playlistStore.load(ownerId);
+    var storageUnavailable = false;
+    List<FavoriteTrack> favorites;
+    try {
+      favorites = await ref.read(favoritesStoreProvider).load(ownerId: ownerId);
+    } catch (_) {
+      favorites = <FavoriteTrack>[];
+      storageUnavailable = true;
+    }
+    List<UserPlaylist> playlists;
+    try {
+      playlists = await _playlistStore.load(ownerId);
+    } catch (_) {
+      playlists = <UserPlaylist>[];
+      storageUnavailable = true;
+    }
     final albumStore = SavedAlbumStore();
-    var savedAlbums = await albumStore.load(ownerId);
-    final visibleSections = await LibrarySectionPreferencesStore().load(ownerId);
+    List<SavedAlbum> savedAlbums;
+    try {
+      savedAlbums = await albumStore.load(ownerId);
+    } catch (_) {
+      savedAlbums = <SavedAlbum>[];
+      storageUnavailable = true;
+    }
+    Set<String> visibleSections;
+    try {
+      visibleSections = await LibrarySectionPreferencesStore().load(ownerId);
+    } catch (_) {
+      visibleSections = <String>{'Playlists', 'Artists', 'Albums', 'Songs'};
+      storageUnavailable = true;
+    }
+    // A corrupted or obsolete preference set must not make firstWhere throw.
+    visibleSections = visibleSections.intersection(_allSections.toSet());
+    if (visibleSections.isEmpty) {
+      visibleSections = <String>{'Playlists', 'Artists', 'Albums', 'Songs'};
+    }
+    if (!mounted || generation != _loadGeneration) return;
     if (auth is AuthSignedIn) {
       try {
         await albumStore.syncWithCloud(
@@ -86,7 +120,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     final currentAuth = ref.read(authSessionProvider);
     final currentOwnerId =
         currentAuth is AuthSignedIn ? currentAuth.userId : 'guest';
-    if (!mounted || currentOwnerId != ownerId) return;
+    if (!mounted || generation != _loadGeneration || currentOwnerId != ownerId) return;
     setState(() {
       _ownerId = ownerId;
       _favorites = favorites;
@@ -96,6 +130,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       if (_selected != 'Downloaded' && !_visibleSections.contains(_selected)) {
         _selected = _allSections.firstWhere(_visibleSections.contains);
       }
+      _storageUnavailable = storageUnavailable;
       _loading = false;
     });
   }
@@ -275,7 +310,25 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<AuthState>(authSessionProvider, (previous, next) => _refresh());
+    ref.listen<AuthState>(authSessionProvider, (previous, next) {
+      final oldOwner = previous is AuthSignedIn ? previous.userId : 'guest';
+      final newOwner = next is AuthSignedIn ? next.userId : 'guest';
+      if (oldOwner != newOwner) {
+        // Clear in-memory account data synchronously to prevent other
+        // listeners from briefly seeing the previous owner's library.
+        setState(() {
+          _ownerId = newOwner;
+          _playlists = [];
+          _favorites = [];
+          _albums = [];
+          _selected = 'Playlists';
+          _visibleSections = {'Playlists', 'Artists', 'Albums', 'Songs'};
+          _storageUnavailable = false;
+          _loading = true;
+        });
+      }
+      _refresh();
+    });
     ref.listen<int>(playlistRefreshSignalProvider, (previous, next) => _refresh());
     ref.listen<int>(savedAlbumRefreshProvider, (previous, next) => _refresh());
     final theme = Theme.of(context);
@@ -305,6 +358,28 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
               ],
             ),
           ),
+          if (!_loading && _storageUnavailable)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
+              child: Semantics(
+                liveRegion: true,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Some saved music could not be loaded.',
+                        style: theme.textTheme.bodyMedium
+                            ?.copyWith(color: theme.bzText2),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _refresh,
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           // Capsule pill section selector — spec §2.3 tab indicators use
           // --radius-pill. Solid active fill, no outline chips: the Apple
           // Music Library filter treatment (quiet chrome, artwork forward).

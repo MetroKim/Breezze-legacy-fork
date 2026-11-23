@@ -2,6 +2,7 @@ import 'package:breezze_api_client/breezze_api_client.dart';
 import 'package:breezze_audio_contracts/audio_contracts.dart';
 import 'package:breezze_design_system/breezze_design_system.dart';
 import 'package:material_ui/material_ui.dart' hide RepeatMode;
+import 'package:palette_generator/palette_generator.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/bootstrap.dart';
@@ -24,12 +25,39 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
   // Artwork-first playback and a dedicated lyric-reading mode share the
   // same player and synced lyric state, without duplicate audio sessions.
   bool _lyricsFocus = false;
+  // Preview a dragged seek without flooding the audio engine with requests.
+  double? _seekPreviewMs;
+  int _seekRequestGeneration = 0;
+  Color? _artworkAccent;
+  int _artworkPaletteGeneration = 0;
 
   @override
   void initState() {
     super.initState();
     _loadLyrics();
+    _loadArtworkAccent(ref.read(playerControllerProvider).currentTrack?.artworkUrl);
   }
+
+  void _loadArtworkAccent(String? rawUrl) {
+    final request = ++_artworkPaletteGeneration;
+    _artworkAccent = null;
+    final uri = Uri.tryParse(rawUrl ?? '');
+    if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) return;
+    // Share Flutter's image cache for artwork; stale palette responses must
+    // never tint a different song after a rapid Next/Previous gesture.
+    PaletteGenerator.fromImageProvider(
+      NetworkImage(uri.toString()), maximumColorCount: 12,
+    ).then((palette) {
+      if (!mounted || request != _artworkPaletteGeneration) return;
+      setState(() {
+        _artworkAccent = palette.vibrantColor?.color ??
+            palette.dominantColor?.color;
+      });
+    }).catchError((Object _) {
+      // Keep the neutral brand treatment when artwork is unavailable.
+    });
+  }
+
 
   Future<void> _loadLyrics() async {
     final request = ++_lyricsRequestGeneration;
@@ -138,6 +166,19 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
     );
   }
 
+  Future<void> _commitSeek(PlayerController controller, double targetMs) async {
+    final request = ++_seekRequestGeneration;
+    try {
+      await controller.seekTo(Duration(milliseconds: targetMs.round()));
+    } catch (_) {
+      // The controller owns the playback error state and recovery UI.
+    } finally {
+      if (mounted && request == _seekRequestGeneration) {
+        setState(() => _seekPreviewMs = null);
+      }
+    }
+  }
+
   String _format(Duration d) {
     final m = d.inMinutes;
     final s = (d - Duration(minutes: m)).inSeconds;
@@ -147,9 +188,19 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
   @override
   Widget build(BuildContext context) {
     ref.listen<String?>(
+      playerControllerProvider.select((state) => state.currentTrack?.artworkUrl),
+      (previous, next) {
+        if (previous != next) _loadArtworkAccent(next);
+      },
+    );
+    ref.listen<String?>(
       playerControllerProvider.select((state) => state.currentTrack?.id),
       (previous, next) {
-        if (previous != next) _loadLyrics();
+        if (previous != next) {
+          _seekRequestGeneration++;
+          _seekPreviewMs = null;
+          _loadLyrics();
+        }
       },
     );
     final player = ref.watch(playerControllerProvider);
@@ -161,13 +212,48 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
     if (track == null) {
       return Scaffold(
         backgroundColor: theme.bzBackground,
-        body: Center(
+        body: SafeArea(
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              BzBnoteMark(size: 72, color: theme.bzText2),
-              const SizedBox(height: 16),
-              Text('Nothing playing', style: theme.textTheme.titleMedium),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                  child: IconButton(
+                    tooltip: 'Close',
+                    icon: const BzSvgIcon(name: 'chevron-down'),
+                    onPressed: () => Navigator.of(context).maybePop(),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        BzBnoteMark(size: 72, color: theme.bzText2),
+                        const SizedBox(height: 20),
+                        Text('Nothing playing',
+                            style: theme.textTheme.headlineSmall),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Choose a song from Home, Browse, Library or Search.',
+                          textAlign: TextAlign.center,
+                          style: theme.textTheme.bodyMedium
+                              ?.copyWith(color: theme.bzText2),
+                        ),
+                        const SizedBox(height: 24),
+                        FilledButton(
+                          onPressed: () => Navigator.of(context).maybePop(),
+                          child: const Text('Back to music'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -177,6 +263,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
     return Scaffold(
       body: BzAmbientBackdrop(
         artworkUrl: track.artworkUrl,
+        artworkAccent: _artworkAccent,
         child: SafeArea(
           child: Center(
             child: ConstrainedBox(
@@ -290,19 +377,25 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                                 ),
                                 child: Slider(
                                   value: player.duration > Duration.zero
-                                      ? player.position.inMilliseconds
+                                      ? (_seekPreviewMs ??
+                                              player.position.inMilliseconds
+                                                  .toDouble())
                                           .clamp(
-                                              0, player.duration.inMilliseconds)
+                                            0.0,
+                                            player.duration.inMilliseconds
+                                                .toDouble(),
+                                          )
                                           .toDouble()
-                                      : 0,
-                                  max: player.duration.inMilliseconds > 0
+                                      : 0.0,
+                                  max: player.duration > Duration.zero
                                       ? player.duration.inMilliseconds.toDouble()
-                                      : 1,
-                                  onChanged: (v) {
-
-                                    controller.seekTo(
-                                        Duration(milliseconds: v.toInt()));
-                                  },
+                                      : 1.0,
+                                  onChanged: player.duration > Duration.zero
+                                      ? (v) => setState(() => _seekPreviewMs = v)
+                                      : null,
+                                  onChangeEnd: player.duration > Duration.zero
+                                      ? (v) => _commitSeek(controller, v)
+                                      : null,
                                 ),
                               ),
                               Row(

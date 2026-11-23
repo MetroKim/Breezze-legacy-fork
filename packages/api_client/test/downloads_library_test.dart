@@ -37,6 +37,7 @@ void main() {
     await trackDir.create();
     final partial = File('${trackDir.path}/audio.part');
     await partial.writeAsBytes(utf8.encode('abc'));
+    await File('${trackDir.path}/audio.part.version').writeAsString('asset-v1');
 
     var receivedRange = '';
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -58,12 +59,223 @@ void main() {
       downloadUrl: 'http://${server.address.address}:${server.port}/audio',
       ownerId: 'user-1',
       catalogTrackId: 'catalog-resume',
+      assetVersion: 'asset-v1',
     );
 
     expect(ok, isTrue);
     expect(receivedRange, 'bytes=3-');
     expect(await File('${trackDir.path}/audio.m4a').readAsString(), 'abcdef');
     expect(await partial.exists(), isFalse);
+  });
+
+
+  test('discards old partial when asset identity is unavailable', () async {
+    final track = BzTrack(
+      id: 'changed-asset',
+      title: 'Changed master',
+      artist: 'Artist',
+      duration: const Duration(minutes: 2),
+    );
+    final trackDir = Directory('${root.path}/changed-asset');
+    await trackDir.create();
+    await File('${trackDir.path}/audio.part')
+        .writeAsBytes(utf8.encode('wrong-master'));
+    await File('${trackDir.path}/audio.part.version')
+        .writeAsString('old-master');
+
+    var requestedRange = false;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      requestedRange = request.headers.value('range') != null;
+      request.response.statusCode = HttpStatus.ok;
+      request.response.add(utf8.encode('new-master'));
+      await request.response.close();
+    });
+    addTearDown(() async => server.close(force: true));
+
+    final ok = await library.download(
+      track,
+      downloadUrl: 'http://${server.address.address}:${server.port}/audio',
+      ownerId: 'user-1',
+      catalogTrackId: 'changed-asset',
+    );
+
+    expect(ok, isTrue);
+    expect(requestedRange, isFalse);
+    expect(await File('${trackDir.path}/audio.m4a').readAsString(),
+        'new-master');
+    expect(await File('${trackDir.path}/audio.part.version').exists(), isFalse);
+  });
+
+  test('discards old partial when asset version changes', () async {
+    final track = BzTrack(
+      id: 'version-change',
+      title: 'Changed codec',
+      artist: 'Artist',
+      duration: const Duration(minutes: 2),
+    );
+    final trackDir = Directory('${root.path}/version-change');
+    await trackDir.create();
+    await File('${trackDir.path}/audio.part')
+        .writeAsBytes(utf8.encode('old'));
+    await File('${trackDir.path}/audio.part.version')
+        .writeAsString('asset-v1');
+
+    var requestedRange = false;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      requestedRange = request.headers.value('range') != null;
+      request.response.statusCode = HttpStatus.ok;
+      request.response.add(utf8.encode('new'));
+      await request.response.close();
+    });
+    addTearDown(() async => server.close(force: true));
+
+    final ok = await library.download(
+      track,
+      downloadUrl: 'http://${server.address.address}:${server.port}/audio',
+      ownerId: 'user-1',
+      catalogTrackId: 'version-change',
+      assetVersion: 'asset-v2',
+    );
+    expect(ok, isTrue);
+    expect(requestedRange, isFalse);
+    expect(await File('${trackDir.path}/audio.m4a').readAsString(), 'new');
+  });
+
+
+  test('invalidates a completed file when the authorized version changes', () async {
+    final track = BzTrack(
+      id: 'completed-replacement',
+      title: 'Updated master',
+      artist: 'Artist',
+      duration: const Duration(minutes: 2),
+    );
+    final trackDir = Directory('${root.path}/completed-replacement');
+    await trackDir.create();
+    await File('${trackDir.path}/audio.m4a')
+        .writeAsBytes(utf8.encode('old-master'));
+    await File('${trackDir.path}/meta.json').writeAsString(jsonEncode({
+      'ownerId': 'user-1',
+      'catalogTrackId': 'completed-replacement',
+      'assetVersion': 'master-old',
+    }));
+
+    var calls = 0;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      calls++;
+      request.response.statusCode = HttpStatus.ok;
+      request.response.add(utf8.encode('new-master'));
+      await request.response.close();
+    });
+    addTearDown(() async => server.close(force: true));
+
+    final ok = await library.download(
+      track,
+      downloadUrl: 'http://${server.address.address}:${server.port}/audio',
+      ownerId: 'user-1',
+      catalogTrackId: 'completed-replacement',
+      assetVersion: 'master-new',
+    );
+    expect(ok, isTrue);
+    expect(calls, 1);
+    expect(await File('${trackDir.path}/audio.m4a').readAsString(),
+        'new-master');
+    final saved = jsonDecode(await File('${trackDir.path}/meta.json').readAsString());
+    expect(saved['assetVersion'], 'master-new');
+  });
+
+  test('resumes ETag-validated partial bytes using If-Range', () async {
+    final track = BzTrack(
+      id: 'etag-resume', title: 'Etaged', artist: 'Artist',
+      duration: const Duration(minutes: 2),
+    );
+    final dir = Directory('${root.path}/etag-resume');
+    await dir.create();
+    await File('${dir.path}/audio.part').writeAsString('abc');
+    await File('${dir.path}/audio.part.version').writeAsString('etag:rev123');
+    String? ifRange;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      ifRange = request.headers.value('if-range');
+      request.response.statusCode = HttpStatus.partialContent;
+      request.response.headers.set('etag', '"rev123"');
+      request.response.headers.set('content-range', 'bytes 3-5/6');
+      request.response.contentLength = 3;
+      request.response.add(utf8.encode('def'));
+      await request.response.close();
+    });
+    addTearDown(() => server.close(force: true));
+
+    expect(await library.download(
+      track,
+      downloadUrl: 'http://${server.address.address}:${server.port}/audio',
+      ownerId: 'listener', catalogTrackId: 'etag-resume',
+    ), isTrue);
+    expect(ifRange, '"rev123"');
+    expect(await File('${dir.path}/audio.m4a').readAsString(), 'abcdef');
+    final meta = jsonDecode(await File('${dir.path}/meta.json').readAsString());
+    expect(meta['assetVersion'], 'etag:rev123');
+  });
+
+  test('replaced ETag forces full redownload instead of old/new splice', () async {
+    final track = BzTrack(
+      id: 'etag-replaced', title: 'Replaced', artist: 'Artist',
+      duration: const Duration(minutes: 2),
+    );
+    final dir = Directory('${root.path}/etag-replaced');
+    await dir.create();
+    await File('${dir.path}/audio.part').writeAsString('old-master');
+    await File('${dir.path}/audio.part.version').writeAsString('etag:old');
+    String? ifRange;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      ifRange = request.headers.value('if-range');
+      request.response.statusCode = HttpStatus.ok;
+      request.response.headers.set('etag', '"new"');
+      request.response.add(utf8.encode('replacement'));
+      await request.response.close();
+    });
+    addTearDown(() => server.close(force: true));
+
+    expect(await library.download(
+      track,
+      downloadUrl: 'http://${server.address.address}:${server.port}/audio',
+      ownerId: 'listener', catalogTrackId: 'etag-replaced',
+    ), isTrue);
+    expect(ifRange, '"old"');
+    expect(await File('${dir.path}/audio.m4a').readAsString(), 'replacement');
+  });
+
+  test('reuses completed music only after matching authorized HEAD ETag', () async {
+    final track = BzTrack(
+      id: 'etag-complete', title: 'Saved', artist: 'Artist',
+      duration: const Duration(minutes: 2),
+    );
+    final dir = Directory('${root.path}/etag-complete');
+    await dir.create();
+    await File('${dir.path}/audio.m4a').writeAsString('saved-bytes');
+    await File('${dir.path}/meta.json').writeAsString(jsonEncode({
+      'ownerId': 'listener', 'catalogTrackId': 'etag-complete',
+      'assetVersion': 'etag:stable',
+    }));
+    final methods = <String>[];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      methods.add(request.method);
+      request.response.headers.set('etag', '"stable"');
+      await request.response.close();
+    });
+    addTearDown(() => server.close(force: true));
+
+    expect(await library.download(
+      track,
+      downloadUrl: 'http://${server.address.address}:${server.port}/audio',
+      ownerId: 'listener', catalogTrackId: 'etag-complete',
+    ), isTrue);
+    expect(methods, ['HEAD']);
+    expect(await File('${dir.path}/audio.m4a').readAsString(), 'saved-bytes');
   });
 
   test('lists only assets owned by the requested account', () async {
@@ -113,7 +325,13 @@ void main() {
 
     final tracks = await library.list(ownerId: 'user-1');
 
-    expect(tracks.single.rightsExpiresAtUtc, expiry);
+    final saved = tracks.single;
+    expect(saved.rightsExpiresAtUtc, expiry);
+    final renewed = expiry.add(const Duration(days: 1));
+    await library.updateOfflineLease(saved.trackId, renewed);
+    expect((await library.list(ownerId: 'user-1')).single.rightsExpiresAtUtc, renewed);
+    await library.remove(saved.trackId);
+    expect(await library.list(ownerId: 'user-1'), isEmpty);
   });
 
   test('does not expose legacy metadata without an owner', () async {

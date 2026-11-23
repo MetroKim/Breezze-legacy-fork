@@ -421,7 +421,7 @@ const _browseDestinations = <_BrowseDestination>[
   _BrowseDestination('Latest Songs', 'Songs released in the last 30 days on your regional chart.', 'music-note'),
   _BrowseDestination('New Releases', 'Albums released in the last 30 days on your regional chart.', 'disc-3'),
   _BrowseDestination('Trending Songs', 'Tracks trending in a defined region and time window.', 'refresh'),
-  _BrowseDestination('Daily Top 100', 'Apple Music Daily Global Top 100 for the selected territory.', 'star'),
+  _BrowseDestination('Daily Top 100', 'Daily top tracks from a verified chart source for your region.', 'star'),
   _BrowseDestination('Coming Soon', 'Upcoming releases with confirmed release metadata.', 'calendar'),
   _BrowseDestination('Music Videos', 'Music videos from channel owners verified by Breezze.', 'video'),
   _BrowseDestination('Charts', 'Global, regional and genre charts with source attribution.', 'grid'),

@@ -10,6 +10,8 @@ import { PlaybackResolveService } from './playback-resolve.service';
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 const MAX_HEARTBEAT_CREDIT_MS = 30_000;
 
+export const externalRecordingId = /^bz:(?:youtube_music:[A-Za-z0-9_-]{11}|deezer:[0-9]{1,20})$/;
+
 export interface StartPlaybackSessionInput {
   trackId?: string;
   externalTrackId?: string;
@@ -36,7 +38,7 @@ export class PlaybackSessionService {
     let playback: Record<string, unknown>;
 
     if (input.externalTrackId !== undefined) {
-      if (!/^bz:youtube_music:[A-Za-z0-9_-]{11}$/.test(input.externalTrackId) ||
+      if (!externalRecordingId.test(input.externalTrackId) ||
           input.trackId || input.providerId || input.providerTrackId || input.canonicalTrackId) {
         throw new ConflictException('INVALID_EXTERNAL_SESSION_REQUEST');
       }
@@ -44,7 +46,7 @@ export class PlaybackSessionService {
         where: { externalId: input.externalTrackId },
         select: { id: true, source: true },
       });
-      if (!track || track.source !== 'youtube_music') {
+      if (!track || track.source !== input.externalTrackId.split(':')[1]) {
         throw new NotFoundException('AUDIO_SOURCE_UNAVAILABLE');
       }
       input = { trackId: track.id, requestedQuality: input.requestedQuality };

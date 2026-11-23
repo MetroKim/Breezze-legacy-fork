@@ -131,7 +131,7 @@ export class CloudflareAwareThrottlerGuard
       const email = req.body?.email;
       if (
         req.method === 'POST' &&
-        path.endsWith('/auth/login') &&
+        (path.endsWith('/auth/supabase/claim')) &&
         typeof email === 'string' &&
         email.trim().length > 0
       ) {

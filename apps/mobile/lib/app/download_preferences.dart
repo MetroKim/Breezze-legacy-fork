@@ -66,7 +66,7 @@ class DownloadPreferences {
           ? requestedMinimum!
           : 2,
       quality: requestedQuality == 'lossless' ? 'lossless' : 'standard',
-      streamingQuality: const ['AAC_128', 'AAC_256', 'LOSSLESS', 'HI_RES'].contains(json['streamingQuality'])
+      streamingQuality: const ['AAC_128', 'AAC_256', 'LOSSLESS'].contains(json['streamingQuality'])
           ? json['streamingQuality'] as String
           : 'AAC_256',
     );

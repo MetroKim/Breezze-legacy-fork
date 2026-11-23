@@ -4,10 +4,18 @@ import {
   ForbiddenException,
   ConflictException,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { createHash, randomBytes, randomUUID } from 'crypto';
+
+const passwordHashOptions = {
+  type: argon2.argon2id,
+  memoryCost: 65536,
+  timeCost: 3,
+  parallelism: 4,
+} as const;
 import { PrismaService } from '../prisma.service';
 import {
   decryptTotpSecret,
@@ -115,12 +123,7 @@ export class AuthService {
     });
     if (exists) throw new ConflictException('EMAIL_TAKEN');
 
-    const passwordHash = await argon2.hash(password, {
-      type: argon2.argon2id,
-      memoryCost: 19456,
-      timeCost: 2,
-      parallelism: 1,
-    });
+    const passwordHash = await argon2.hash(password, passwordHashOptions);
     let user: AuthUser;
     try {
       user = await this.prisma.user.create({
@@ -425,6 +428,51 @@ export class AuthService {
 
     await this.prisma.refreshToken.updateMany({
       where: { familyId: token.familyId, userId: token.userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+  }
+
+  /** Invalidate every active refresh-token family owned by this user.
+   * JWT strategy checks active session families, so already-issued access
+   * tokens stop working on the next authenticated API request.
+   */
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<void> {
+    if (newPassword.length < 12 || newPassword.length > 128) {
+      throw new BadRequestException('PASSWORD_POLICY');
+    }
+    if (currentPassword === newPassword) {
+      throw new BadRequestException('PASSWORD_REUSED');
+    }
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { passwordHash: true },
+    });
+    if (!user || !await argon2.verify(user.passwordHash, currentPassword).catch(() => false)) {
+      throw new UnauthorizedException('INVALID_CREDENTIALS');
+    }
+    const passwordHash = await argon2.hash(newPassword, passwordHashOptions);
+    // Optimistic guard prevents two simultaneous changes accepting a stale
+    // current password. Revoke all device sessions in the same transaction.
+    await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.user.updateMany({
+        where: { id: userId, passwordHash: user.passwordHash },
+        data: { passwordHash },
+      });
+      if (updated.count !== 1) throw new UnauthorizedException('PASSWORD_CHANGED');
+      await tx.refreshToken.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+    });
+  }
+
+  async revokeAllSessions(userId: string): Promise<void> {
+    await this.prisma.refreshToken.updateMany({
+      where: { userId, revokedAt: null },
       data: { revokedAt: new Date() },
     });
   }

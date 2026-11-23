@@ -1,6 +1,7 @@
 export interface Env {
   MEDIA_BUCKET: R2Bucket;
   MEDIA_SIGNING_KEY: string;
+  WEB_ALLOWED_ORIGINS?: string;
 }
 
 const encoder = new TextEncoder();
@@ -82,7 +83,7 @@ async function playback(request: Request, url: URL, env: Env): Promise<Response>
   }
 
   const key = `audio/${trackId}/${variant}`;
-  const rangeHeader = request.headers.get('range');
+  let rangeHeader = request.headers.get('range');
   let object: R2ObjectBody | R2Object | null;
   let status = 200;
   let rangeStart: number | null = null;
@@ -95,6 +96,14 @@ async function playback(request: Request, url: URL, env: Env): Promise<Response>
     const end = match[2] ? Number(match[2]) : null;
     const head = await env.MEDIA_BUCKET.head(key);
     if (!head) return error(404, 'MEDIA_NOT_FOUND');
+    // HTTP If-Range: a replaced R2 object must never be appended to a
+    // different encoded master. A mismatch forces a new full 200 response.
+    const ifRange = request.headers.get('if-range');
+    if (ifRange != null && ifRange !== head.httpEtag) {
+      rangeHeader = null;
+      object = request.method === 'HEAD'
+        ? head : await env.MEDIA_BUCKET.get(key);
+    } else {
     if (
       (start === null && (end === null || end <= 0)) ||
       (start !== null && (!Number.isSafeInteger(start) || start < 0)) ||
@@ -128,6 +137,7 @@ async function playback(request: Request, url: URL, env: Env): Promise<Response>
     totalSize = head.size;
     object = await env.MEDIA_BUCKET.get(key, { range: { offset, length } });
     status = 206;
+    }
   } else {
     object = request.method === 'HEAD'
       ? await env.MEDIA_BUCKET.head(key)
@@ -159,11 +169,61 @@ async function playback(request: Request, url: URL, env: Env): Promise<Response>
   return new Response(object.body, { status, headers });
 }
 
+// Only configured web applications may read signed stream responses in a browser.
+// Native clients send no Origin; they remain unaffected by this CORS policy.
+function browserOrigin(request: Request, env: Env): string | null {
+  const origin = request.headers.get('Origin');
+  if (!origin) return null;
+  const allowed = (env.WEB_ALLOWED_ORIGINS ?? '')
+    .split(',').map((value) => value.trim()).filter(Boolean);
+  return allowed.includes(origin) ? origin : null;
+}
+
+function withBrowserCors(response: Response, request: Request, env: Env): Response {
+  const headers = new Headers(response.headers);
+  if (request.headers.has('Origin')) {
+    const values = (headers.get('Vary') ?? '').split(',').map(v => v.trim()).filter(Boolean);
+    if (!values.some(v => v.toLowerCase() === 'origin')) {
+      headers.set('Vary', [...values, 'Origin'].join(', '));
+    }
+    const origin = browserOrigin(request, env);
+    if (origin) {
+      headers.set('Access-Control-Allow-Origin', origin);
+      headers.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, ETag, Accept-Ranges');
+    } else {
+      headers.delete('Access-Control-Allow-Origin');
+    }
+  }
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    if (!env.MEDIA_SIGNING_KEY || !env.MEDIA_BUCKET) return error(503, 'MEDIA_STORAGE_NOT_CONFIGURED');
+    if (!env.MEDIA_SIGNING_KEY || !env.MEDIA_BUCKET) {
+      return error(503, 'MEDIA_STORAGE_NOT_CONFIGURED');
+    }
+    const originHeader = request.headers.get('Origin');
+    if (originHeader && !browserOrigin(request, env)) {
+      return error(403, 'CORS_ORIGIN_DENIED');
+    }
+    if (request.method === 'OPTIONS') {
+      const requestedMethod = request.headers.get('Access-Control-Request-Method');
+      const requestedHeaders = (request.headers.get('Access-Control-Request-Headers') ?? '')
+        .split(',').map(v => v.trim().toLowerCase()).filter(Boolean);
+      if (!['GET', 'HEAD'].includes(requestedMethod ?? '') ||
+          requestedHeaders.some(h => !['range', 'if-range'].includes(h))) {
+        return error(403, 'CORS_PREFLIGHT_DENIED');
+      }
+      const response = withBrowserCors(new Response(null, { status: 204 }), request, env);
+      response.headers.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+      response.headers.set('Access-Control-Allow-Headers', 'Range, If-Range');
+      response.headers.set('Access-Control-Max-Age', '600');
+      return response;
+    }
     const url = new URL(request.url);
-    if (url.pathname.startsWith('/audio/')) return playback(request, url, env);
-    return error(404, 'NOT_FOUND');
+    const response = url.pathname.startsWith('/audio/')
+      ? await playback(request, url, env)
+      : error(404, 'NOT_FOUND');
+    return withBrowserCors(response, request, env);
   },
 };

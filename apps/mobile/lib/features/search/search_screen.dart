@@ -57,6 +57,14 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   int _searchGeneration = 0;
   Timer? _typeaheadTimer;
 
+  String get _currentOwnerId {
+    final auth = ref.read(authSessionProvider);
+    return auth is AuthSignedIn ? auth.userId : 'guest';
+  }
+
+  bool _isCurrentOwner(String ownerId) =>
+      mounted && _currentOwnerId == ownerId;
+
   SearchHistoryStore get _history {
     final auth = ref.read(authSessionProvider);
     final ownerId = auth is AuthSignedIn ? auth.userId : 'guest';
@@ -229,15 +237,27 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   }
 
   Future<void> _removeHistory(String query) async {
-    final history = await _history.remove(query);
-    if (!mounted) return;
-    setState(() => _recentSearches = history);
+    final ownerId = _currentOwnerId;
+    final generation = _searchGeneration;
+    try {
+      final history = await _history.remove(query);
+      if (!_isCurrentOwner(ownerId) || generation != _searchGeneration) return;
+      setState(() => _recentSearches = history);
+    } catch (_) {
+      // A storage failure must not break the Search screen.
+    }
   }
 
   Future<void> _clearHistory() async {
-    await _history.clear();
-    if (!mounted) return;
-    setState(() => _recentSearches = []);
+    final ownerId = _currentOwnerId;
+    final generation = _searchGeneration;
+    try {
+      await _history.clear();
+      if (!_isCurrentOwner(ownerId) || generation != _searchGeneration) return;
+      setState(() => _recentSearches = []);
+    } catch (_) {
+      // Keep Search interactive when local persistence is unavailable.
+    }
   }
 
   void _reuseSearch(String query) {
@@ -286,9 +306,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     final ownerId = auth is AuthSignedIn ? auth.userId : 'guest';
     final store = PlaylistStore();
     var playlists = await store.load(ownerId);
+    if (!_isCurrentOwner(ownerId)) return;
     String? selectedId;
 
     Future<String?> create(String name) async {
+      if (!_isCurrentOwner(ownerId)) return null;
       String? remoteId;
       if (auth is AuthSignedIn) {
         try {
@@ -296,8 +318,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           remoteId = remote['id'] as String?;
         } catch (_) {}
       }
+      if (!_isCurrentOwner(ownerId)) return null;
       await store.create(ownerId, name, id: remoteId);
-      return remoteId;
+      return _isCurrentOwner(ownerId) ? remoteId : null;
     }
 
     if (playlists.isEmpty) {
@@ -344,7 +367,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       }
     }
 
-    if (selectedId == null) return;
+    if (selectedId == null || !_isCurrentOwner(ownerId)) return;
     final remotePlaylist = RegExp(r'^[0-9a-fA-F-]{36}$').hasMatch(selectedId);
     if (auth is AuthSignedIn && remotePlaylist) {
       try {
@@ -354,6 +377,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         return;
       }
     }
+    if (!_isCurrentOwner(ownerId)) return;
     await store.addTrack(ownerId, selectedId, FavoriteTrack(
       id: track.id,
       title: track.title,
@@ -361,7 +385,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       artworkUrl: track.artworkUrl,
       durationMs: track.duration.inMilliseconds,
     ));
-    if (!mounted) return;
+    if (!_isCurrentOwner(ownerId)) return;
     ref.read(playlistRefreshSignalProvider.notifier).state++;
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Added to playlist')));
   }
@@ -371,6 +395,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     final ownerId = auth is AuthSignedIn ? auth.userId : 'guest';
     final favorites = ref.read(favoritesStoreProvider);
     if (!await favorites.isFavorite(track.id, ownerId: ownerId)) {
+      if (!_isCurrentOwner(ownerId)) return;
       await favorites.toggle(
         FavoriteTrack(
           id: track.id,
@@ -381,9 +406,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         ),
         ownerId: ownerId,
       );
+      if (!_isCurrentOwner(ownerId)) return;
       await ref.read(outboxSyncProvider).drainIfSignedIn();
     }
-    if (!mounted) return;
+    if (!_isCurrentOwner(ownerId)) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Library updated')),
     );
@@ -465,17 +491,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       );
       return;
     }
-    if (track.id.startsWith('bz:deezer:')) {
-      final id = track.id.replaceFirst('bz:deezer:', 'bz:deezer_preview:');
-      final preview = TrackInfo(id: id, title: track.title, artist: track.artist,
-          artworkUrl: track.artworkUrl);
-      ref.read(playerControllerProvider.notifier).playTrack(
-        trackId: id, queue: [preview], startIndex: 0, origin: 'search',
-        sourceContext: 'Deezer preview',
-      );
-      Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const NowPlayingScreen()));
-      return;
-    }
     if (isMetadataOnlyTrackId(track.id)) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -518,7 +533,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       if (previousOwner != nextOwner) {
         _typeaheadTimer?.cancel();
         _searchGeneration++;
+        // A typed query is private account state too: never show it to the
+        // next listener just because the Search tab remains mounted.
+        _controller.clear();
         setState(() {
+          _searchLibrary = false;
+          _searchVideos = false;
           _recentSearches = [];
           _results = [];
           _loading = false;
@@ -653,22 +673,68 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     ? _buildRecentSearches(theme)
                     : _error != null
                         ? Center(
-                            child: Padding(
+                            child: SingleChildScrollView(
                               padding: const EdgeInsets.all(24),
-                              child: Text(
-                                _error!,
-                                textAlign: TextAlign.center,
-                                style: theme.textTheme.bodyMedium,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  BzBnoteMark(size: 48, color: theme.bzText2),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    'Search unavailable',
+                                    style: theme.textTheme.titleLarge,
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    _error!,
+                                    style: theme.textTheme.bodyMedium
+                                        ?.copyWith(color: theme.bzText2),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  const SizedBox(height: 20),
+                                  OutlinedButton(
+                                    onPressed: () => _search(
+                                      _controller.text,
+                                      recordHistory: false,
+                                    ),
+                                    child: const Text('Try again'),
+                                  ),
+                                ],
                               ),
                             ),
                           )
                         : _results.isEmpty
                             ? Center(
-                                child: Text(
-                                  (_searchVideos && !_searchLibrary
-                                      ? 'No official videos found for "${_controller.text.trim()}"'
-                                      : 'No results for "${_controller.text.trim()}"'),
-                                  style: theme.textTheme.titleMedium,
+                                child: SingleChildScrollView(
+                                  padding: const EdgeInsets.all(24),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        (_searchVideos && !_searchLibrary
+                                            ? 'No official videos found for "${_controller.text.trim()}"'
+                                            : 'No results for "${_controller.text.trim()}"'),
+                                        style: theme.textTheme.titleMedium,
+                                        textAlign: TextAlign.center,
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Try a different artist, song or keyword.',
+                                        style: theme.textTheme.bodyMedium
+                                            ?.copyWith(color: theme.bzText2),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                      const SizedBox(height: 16),
+                                      TextButton(
+                                        onPressed: () {
+                                          _controller.clear();
+                                          _onQueryChanged('');
+                                        },
+                                        child: const Text('Clear search'),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               )
                             : ListView.builder(
@@ -717,7 +783,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                                           )
                                         : Text(
                                             track.id.startsWith('bz:deezer:')
-                                                ? '${track.artist} · ${track.hasPreview ? 'Deezer preview' : 'Deezer catalog'}'
+                                                ? '${track.artist} · ${track.hasPreview ? 'Deezer · preview available' : 'Deezer catalog'}'
                                                 : track.id.startsWith('bz:youtube_music:')
                                                         ? '${track.artist} · YouTube Music'
                                                         : track.id.startsWith('bz:jamendo:')
@@ -736,7 +802,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                                           IconButton(
                                             tooltip: track.id.startsWith('bzv:')
                                                 ? 'Watch music video'
-                                                : track.hasPreview ? 'Play preview' : 'Play',
+                                                : 'Play',
                                             icon: const BzSvgIcon(name: 'play', size: 20),
                                             onPressed: () => _play(track),
                                           ),

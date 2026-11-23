@@ -168,7 +168,9 @@ jobs:
 
   flutter_macos:
     name: Flutter macOS and iOS builds
-    runs-on: macos-latest
+    # video_player_avfoundation needs the Xcode 26 AVFoundation SDK.
+    # Use Intel to avoid macos-latest Apple Silicon runner allocation failures.
+    runs-on: macos-26-intel
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -177,7 +179,9 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          cache: true
+          # Native builds passed but the hosted runner cancelled during the
+          # large Flutter SDK cache-upload post action. Caching is optional.
+          cache: false
 
       - name: Generate platform runners
         working-directory: apps/mobile
@@ -313,6 +317,8 @@ jobs:
         run: npm install --cache "$RUNNER_TEMP/npm-cache-api-worker" --no-audit --no-fund
       - name: Typecheck API Worker
         run: npm run check
+      - name: Test exact-origin browser CORS
+        run: npm test
 
   cloudflare_media:
     name: Cloudflare Worker typecheck
@@ -335,3 +341,5 @@ jobs:
           node -e "const a=require('/tmp/breezze-worker-audit.json'); console.log('WORKER_AUDIT_TOTALS', JSON.stringify(a.metadata?.vulnerabilities)); for (const [name, v] of Object.entries(a.vulnerabilities || {})) console.log('WORKER_AUDIT_PACKAGE', name, JSON.stringify({severity:v.severity,isDirect:v.isDirect,range:v.range,fixAvailable:v.fixAvailable,via:v.via.map(x=>typeof x==='string'?x:{name:x.name,title:x.title,range:x.range,url:x.url})}));"
       - name: Typecheck Worker
         run: npm run check
+      - name: Test private R2 media grants, byte ranges, and browser CORS
+        run: npm test

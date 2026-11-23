@@ -58,12 +58,12 @@ describe('CloudflareAwareThrottlerGuard', () => {
     expect(response.setHeader).toHaveBeenCalledWith('Retry-After', '60');
   });
 
-  it('applies a separate hashed account quota to login attempts', async () => {
+  it('applies a separate hashed account quota to legacy Supabase claims', async () => {
     process.env.API_RATE_LIMIT = '100';
     process.env.LOGIN_ACCOUNT_RATE_LIMIT = '1';
     redis.eval.mockResolvedValueOnce([1, 60000]).mockResolvedValueOnce([2, 899000]);
 
-    await expect(guard.canActivate(context('127.0.0.1', { email: 'Person@Example.com' }, '/api/v1/auth/login')))
+    await expect(guard.canActivate(context('127.0.0.1', { email: 'Person@Example.com' }, '/api/v1/auth/supabase/claim')))
       .rejects.toBeInstanceOf(HttpException);
     const accountKey = redis.eval.mock.calls[1][2] as string;
     expect(accountKey).toContain('login-account:');
@@ -72,7 +72,7 @@ describe('CloudflareAwareThrottlerGuard', () => {
   });
 
 
-  it('shares the login account quota across different source IPs', async () => {
+  it('shares legacy-claim quota across different source IPs', async () => {
     process.env.API_RATE_LIMIT = '100';
     process.env.LOGIN_ACCOUNT_RATE_LIMIT = '100';
     redis.eval.mockResolvedValue([1, 60000]);
@@ -81,12 +81,12 @@ describe('CloudflareAwareThrottlerGuard', () => {
     await expect(guard.canActivate(context(
       '192.0.2.10',
       { email },
-      '/api/v1/auth/login',
+      '/api/v1/auth/supabase/claim',
     ))).resolves.toBe(true);
     await expect(guard.canActivate(context(
       '198.51.100.20',
       { email: 'TARGET@example.com' },
-      '/api/v1/auth/login',
+      '/api/v1/auth/supabase/claim',
     ))).resolves.toBe(true);
 
     const firstAccountKey = redis.eval.mock.calls[1][2] as string;

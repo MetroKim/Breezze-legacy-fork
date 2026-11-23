@@ -625,7 +625,9 @@ class _TabButton extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   AnimatedContainer(
-                    duration: const Duration(milliseconds: BzMotion.fastMs),
+                    duration: MediaQuery.disableAnimationsOf(context)
+                        ? Duration.zero
+                        : const Duration(milliseconds: BzMotion.fastMs),
                     curve: const Cubic(0.22, 1, 0.36, 1),
                     width: 42,
                     height: 42,

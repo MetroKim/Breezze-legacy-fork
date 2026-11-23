@@ -115,7 +115,7 @@ class JustAudioEngineAdapter implements AudioEngineAdapter, GaplessLocalQueueEng
         children: [
           for (final source in sources) ja.AudioSource.file(source.streamUrl),
         ],
-        useLazyPreparation: false,
+        useLazyPreparation: true, // prebuffer upcoming files, not the entire library
       ),
       initialIndex: initialIndex,
     );

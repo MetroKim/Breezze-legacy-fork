@@ -288,6 +288,10 @@ class AuthSessionController extends Notifier<AuthState> {
     return 'AUTH_FAILED';
   }
 
+  void resetToSignedOut() {
+    if (state is! AuthSignedIn) state = const AuthSignedOut();
+  }
+
   Future<void> signOut() async {
     try {
       await ref.read(playerControllerProvider.notifier).stop();

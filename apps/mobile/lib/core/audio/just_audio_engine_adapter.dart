@@ -8,7 +8,7 @@ import 'package:just_audio/just_audio.dart' as ja;
 /// Native audio engine — implements the Breezze engine contract over
 /// just_audio, which wraps ExoPlayer (Android) and AVFoundation (iOS).
 class JustAudioEngineAdapter implements AudioEngineAdapter {
-  final ja.AudioPlayer _player = ja.AudioPlayer();
+  final ja.AudioPlayer _player = ja.AudioPlayer(handleInterruptions: false);
   final StreamController<PlaybackState> _states =
       StreamController<PlaybackState>.broadcast();
   late final StreamSubscription<ja.PlaybackEvent> _errorSubscription;
@@ -16,6 +16,7 @@ class JustAudioEngineAdapter implements AudioEngineAdapter {
   StreamSubscription<AudioInterruptionEvent>? _interruptionSubscription;
   StreamSubscription<void>? _becomingNoisySubscription;
   bool _disposed = false;
+  bool _pausedByInterruption = false;
 
   JustAudioEngineAdapter() {
     _errorSubscription = _player.playbackEventStream.listen(
@@ -59,12 +60,17 @@ class JustAudioEngineAdapter implements AudioEngineAdapter {
       if (_disposed) return;
       _interruptionSubscription = session.interruptionEventStream.listen((event) {
         if (event.begin) {
+          // A paused audio player has already yielded to an in-app video.
+          // Only an interruption of active playback changes its state.
+          if (!_player.playing) return;
+          _pausedByInterruption = true;
           // Pause rather than duck for calls, navigation prompts and other
           // exclusive audio interruptions. Never auto-resume after a call.
           unawaited(_player.pause().catchError((_) {}));
           _states.add(PlaybackState.interrupted);
-        } else {
-          _states.add(PlaybackState.paused);
+        } else if (_pausedByInterruption) {
+          _pausedByInterruption = false;
+          if (!_player.playing) _states.add(PlaybackState.paused);
         }
       });
       _becomingNoisySubscription = session.becomingNoisyEventStream.listen((_) {
@@ -95,7 +101,7 @@ class JustAudioEngineAdapter implements AudioEngineAdapter {
   Future<void> seek(Duration position) => _player.seek(position);
 
   @override
-  Future<void> stop() => _player.stop();
+  Future<void> stop() => _disposed ? Future<void>.value() : _player.stop();
 
   @override
   Duration get position => _player.position;
@@ -116,12 +122,19 @@ class JustAudioEngineAdapter implements AudioEngineAdapter {
   Stream<PlaybackState> get engineStateStream => _states.stream;
 
   Future<void> dispose() async {
+    if (_disposed) return;
     _disposed = true;
     await _errorSubscription.cancel();
     await _stateSubscription.cancel();
     await _interruptionSubscription?.cancel();
     await _becomingNoisySubscription?.cancel();
     await _states.close();
-    await _player.dispose();
+    // just_audio switches from its native player to an idle player on stop.
+    // Finish that switch before disposing the platform during app shutdown.
+    try {
+      await _player.stop();
+    } finally {
+      await _player.dispose();
+    }
   }
 }

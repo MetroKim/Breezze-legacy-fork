@@ -10,7 +10,9 @@ import '../../widgets/bz_brand_icons.dart';
 /// Auth screen — login + register in one premium glass card, wired to
 /// the real backend session controller.
 class AuthScreen extends ConsumerStatefulWidget {
-  const AuthScreen({super.key});
+  const AuthScreen({super.key, this.popOnSignIn = false});
+
+  final bool popOnSignIn;
 
   @override
   ConsumerState<AuthScreen> createState() => _AuthScreenState();
@@ -51,6 +53,15 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<AuthState>(authSessionProvider, (previous, next) {
+      if (widget.popOnSignIn && next is AuthSignedIn) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && Navigator.of(context).canPop()) {
+            Navigator.of(context).pop();
+          }
+        });
+      }
+    });
     final theme = Theme.of(context);
     final auth = ref.watch(authSessionProvider);
     final busy = auth is AuthSigningIn;
@@ -179,9 +190,13 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
               ),
               const SizedBox(height: 12),
               _socialButton(
-                label: 'Continue with Apple',
+                label: const bool.fromEnvironment('BREEZZE_APPLE_SIGN_IN_ENABLED', defaultValue: false)
+                    ? 'Continue with Apple'
+                    : 'Apple Sign-In (coming soon)',
                 isApple: true,
-                enabled: !busy,
+                enabled: !busy &&
+                    const bool.fromEnvironment('BREEZZE_APPLE_SIGN_IN_ENABLED',
+                        defaultValue: false),
                 onPressed: () => _signInWith('apple'),
               ),
               const SizedBox(height: 12),

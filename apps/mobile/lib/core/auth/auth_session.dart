@@ -151,6 +151,7 @@ class AuthSessionController extends Notifier<AuthState> {
       final result = await _client.auth.signUp(
         email: email.trim(),
         password: password,
+        emailRedirectTo: kIsWeb ? Uri.base.origin : _callback,
         data: displayName == null || displayName.isEmpty
             ? null
             : {'full_name': displayName},

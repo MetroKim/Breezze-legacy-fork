@@ -72,4 +72,61 @@ void main() {
     ));
     expect(requested, isFalse);
   });
+  test('Google ID-token grant validates through Supabase Auth, never a second provider backend', () async {
+    late http.Request sent;
+    final transport = SupabaseAuthTransport(
+      projectUrl: 'https://breezzetest.supabase.co',
+      publishableKey: 'sb_publishable_test',
+      client: MockClient((request) async {
+        sent = request;
+        return http.Response('{"access_token":"ephemeral-supabase-jwt"}', 200);
+      }),
+    );
+    expect(await transport.signInWithIdToken(
+      provider: 'google', idToken: 'signed-google-id-token',
+    ), 'ephemeral-supabase-jwt');
+    expect(sent.url.path, '/auth/v1/token');
+    expect(sent.url.queryParameters['grant_type'], 'id_token');
+    expect(sent.headers['apikey'], 'sb_publishable_test');
+    expect(jsonDecode(sent.body), {
+      'provider': 'google', 'id_token': 'signed-google-id-token',
+    });
+  });
+
+  test('Apple passes raw nonce to Supabase while native Apple receives SHA256', () async {
+    late http.Request sent;
+    final transport = SupabaseAuthTransport(
+      projectUrl: 'https://breezzetest.supabase.co',
+      publishableKey: 'sb_publishable_test',
+      client: MockClient((request) async {
+        sent = request;
+        return http.Response('{"access_token":"verified-jwt"}', 200);
+      }),
+    );
+    await transport.signInWithIdToken(
+      provider: 'apple', idToken: 'signed-apple-id-token',
+      nonce: 'secure-raw-nonce',
+    );
+    expect(jsonDecode(sent.body), {
+      'provider': 'apple', 'id_token': 'signed-apple-id-token',
+      'nonce': 'secure-raw-nonce',
+    });
+  });
+
+  test('other identity providers are denied before sending any request', () async {
+    var requests = 0;
+    final transport = SupabaseAuthTransport(
+      projectUrl: 'https://breezzetest.supabase.co',
+      publishableKey: 'sb_publishable_test',
+      client: MockClient((_) async {
+        requests++;
+        return http.Response('{}', 200);
+      }),
+    );
+    await expectLater(transport.signInWithIdToken(
+      provider: 'auth0', idToken: 'invalid-token',
+    ), throwsA(isA<SupabaseAuthTransportException>()));
+    expect(requests, 0);
+  });
+
 }

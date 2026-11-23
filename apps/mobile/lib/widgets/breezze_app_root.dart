@@ -2,6 +2,7 @@ import 'dart:async';
 import '../../app/appearance_controller.dart';
 
 import 'package:material_ui/material_ui.dart';
+import 'package:palette_generator/palette_generator.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:breezze_design_system/breezze_design_system.dart';
 import '../../core/api/breezze_api.dart';
@@ -37,10 +38,12 @@ class _BreezzeAppRootState extends ConsumerState<BreezzeAppRoot> with WidgetsBin
   ProviderContainer? _container;
   JustAudioEngineAdapter? _audioEngine;
   BackgroundAudioBridge? _backgroundBridge;
+  late final Future<Color?> _brandSeedFuture;
 
   @override
   void initState() {
     super.initState();
+    _brandSeedFuture = _readBrandIconPalette();
     WidgetsBinding.instance.addObserver(this);
     _container = ProviderScope.containerOf(context, listen: false);
     _audioEngine = JustAudioEngineAdapter();
@@ -121,6 +124,20 @@ class _BreezzeAppRootState extends ConsumerState<BreezzeAppRoot> with WidgetsBin
     }
   }
 
+  Future<Color?> _readBrandIconPalette() async {
+    try {
+      final palette = await PaletteGenerator.fromImageProvider(
+        const AssetImage('assets/icons/launcher.png'),
+        maximumColorCount: 16,
+      );
+      // The approved Breezze launcher is monochrome; the theme's contrast
+      // policy will keep the neutral fallback for an achromatic palette.
+      return palette.vibrantColor?.color ?? palette.dominantColor?.color;
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = ref.watch(authSessionProvider);
@@ -129,12 +146,14 @@ class _BreezzeAppRootState extends ConsumerState<BreezzeAppRoot> with WidgetsBin
     // signed-out gate rendered AuthScreen before the shell's nested
     // MaterialApp existed, leaving login/register without app navigation,
     // theme and inherited Material widgets.
-    return MaterialApp(
+    return FutureBuilder<Color?>(
+      future: _brandSeedFuture,
+      builder: (context, palette) => MaterialApp(
       title: 'Breezze',
       debugShowCheckedModeBanner: false,
       themeMode: ref.watch(appearanceProvider).valueOrNull ?? ThemeMode.system,
-      theme: bzLightTheme(),
-      darkTheme: bzDarkTheme(),
+      theme: bzLightTheme(brandSeed: palette.data),
+      darkTheme: bzDarkTheme(brandSeed: palette.data),
       home: Builder(
         builder: (context) {
           if (auth is AuthUninitialized) {
@@ -181,6 +200,7 @@ class _BreezzeAppRootState extends ConsumerState<BreezzeAppRoot> with WidgetsBin
 
           return const AuthScreen();
         },
+      ),
       ),
     );
   }

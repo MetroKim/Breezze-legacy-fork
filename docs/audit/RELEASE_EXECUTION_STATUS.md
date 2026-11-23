@@ -107,3 +107,17 @@ states, and automated/device evidence at the final commit.
   390px mobile viewport, checks for a rendered Flutter scene, records uncaught
   JavaScript exceptions, and publishes a screenshot artifact. This extends
   but does not replace manual screen-reader/physical-device verification.
+
+## Additional runtime audit
+
+- Home and Library now finish initial loads even when local persistence fails,
+  displaying in-app retry actions instead of indefinite skeleton screens.
+- Concurrent Library refreshes reject stale account/generation results, and
+  switching users clears in-memory library content before asynchronous reload.
+- Malformed/empty stored section preferences fall back to known valid filters.
+- The API Worker handles preflight requests and adds CORS headers only for
+  explicitly configured trusted browser origins. The deployed origin/Worker
+  still require matching environment configuration and authorized deployment.
+- Browser UI verification checks the Flutter painter inside shadow DOM, not
+  only top-level canvas elements. The edge CORS failure in CI is tracked
+  separately and must be tested against the deployed allowed origin.

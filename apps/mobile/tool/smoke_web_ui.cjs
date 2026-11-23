@@ -49,9 +49,22 @@ async function main() {
     try {
       await page.waitForFunction(
         () => {
-          const host = document.querySelector('flutter-view, flt-glass-pane');
-          const rendered = document.querySelector('canvas, flt-scene-host');
-          return host !== null && rendered !== null;
+          // Flutter paints inside the <flt-glass-pane> shadow root. A
+          // document.querySelector('canvas') misses that render surface.
+          const host = document.querySelector('flutter-view');
+          if (!host) return false;
+          function hasRenderedSurface(node) {
+            if (!node) return false;
+            if (node.nodeType === Node.ELEMENT_NODE &&
+                node.matches('canvas, flt-scene-host, flt-picture')) {
+              return true;
+            }
+            if (node.shadowRoot && hasRenderedSurface(node.shadowRoot)) {
+              return true;
+            }
+            return Array.from(node.children ?? []).some(hasRenderedSurface);
+          }
+          return hasRenderedSurface(host);
         },
         null,
         { timeout: 60000 },
@@ -63,7 +76,9 @@ async function main() {
         body: document.body.innerHTML.slice(0, 4000),
         canvasCount: document.querySelectorAll('canvas').length,
         flutterHostCount: document.querySelectorAll('flutter-view, flt-glass-pane').length,
-        scriptUrls: [...document.querySelectorAll('script')].map(s => s.src),
+        glassPaneShadow: document.querySelector('flt-glass-pane')?.shadowRoot?.innerHTML.slice(0, 1600) ?? null,
+        scriptCount: document.querySelectorAll('script').length,
+        scriptUrls: [...document.querySelectorAll('script')].slice(0, 10).map(s => s.src),
       }));
       console.error('Breezze browser DOM diagnostics:', JSON.stringify(details));
       console.error('Breezze browser JS errors:', JSON.stringify(errors));

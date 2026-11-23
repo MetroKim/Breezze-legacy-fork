@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/bootstrap.dart';
 import '../../app/downloads_controller.dart';
+import '../../core/audio/offline_lease_policy.dart';
 import '../../core/auth/auth_session.dart';
 import '../../core/database/outbox_sync_service.dart';
 import '../../widgets/bz_brand_icons.dart';
@@ -72,7 +73,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
           }
           final rawExpiry = lease['offlineLeaseExpiresAt'] as String?;
           final expiry = rawExpiry == null ? null : DateTime.tryParse(rawExpiry);
-          if (rawExpiry != null && expiry == null) continue;
+          if (!hasValidOfflineLease(expiry)) continue;
           await library.updateOfflineLease(track.trackId, expiry);
         } catch (_) {
           // A transient network failure does not erase a still-valid offline lease.
@@ -112,10 +113,10 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
     final auth = ref.read(authSessionProvider);
     if (auth is! AuthSignedIn || auth.userId != track.ownerId) return;
     final expiry = track.rightsExpiresAtUtc;
-    if (expiry != null && !expiry.isAfter(DateTime.now().toUtc())) {
+    if (!hasValidOfflineLease(expiry)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('This download has expired. Connect to the internet and download it again.'),
+          content: Text('This download has no valid offline licence. Reconnect to renew it.'),
         ),
       );
       return;

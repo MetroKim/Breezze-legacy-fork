@@ -19,6 +19,26 @@ Future<void> openYouTubePlayer({
   ));
 }
 
+/// Audio may be restored only if the video still belongs to the exact
+/// queue entry and recording that were playing at handoff time.
+/// Never resurrect a superseded track or override a user/OS pause.
+bool shouldResumeAudioAfterVideo({
+  required bool wasPlaying,
+  required String? openedEntryId,
+  required String? openedTrackId,
+  required String? currentEntryId,
+  required String? currentTrackId,
+  required PlaybackState currentState,
+  required AppLifecycleState? lifecycleState,
+}) =>
+    wasPlaying &&
+    openedEntryId != null &&
+    openedEntryId == currentEntryId &&
+    openedTrackId != null &&
+    openedTrackId == currentTrackId &&
+    currentState == PlaybackState.paused &&
+    lifecycleState == AppLifecycleState.resumed;
+
 Future<void> openVideoSurface(BuildContext context, WidgetBuilder builder) async {
   final container = ProviderScope.containerOf(context, listen: false);
   final controller = container.read(playerControllerProvider.notifier);
@@ -33,16 +53,43 @@ Future<void> openVideoSurface(BuildContext context, WidgetBuilder builder) async
     return;
   }
   final entry = controller.queue.current?.entryId;
+  final trackId = previous.currentTrack?.id;
   final resumeAudio = previous.playbackState == PlaybackState.playing;
-  if (resumeAudio) await controller.pause();
+  if (resumeAudio) {
+    await controller.pause();
+    // Pausing can await a server session. A new selection made during that
+    // await must not be covered by a video started for the previous track.
+    if (!context.mounted ||
+        !shouldResumeAudioAfterVideo(
+          wasPlaying: resumeAudio,
+          openedEntryId: entry,
+          openedTrackId: trackId,
+          currentEntryId: controller.queue.current?.entryId,
+          currentTrackId: container.read(playerControllerProvider).currentTrack?.id,
+          currentState: container.read(playerControllerProvider).playbackState,
+          lifecycleState: WidgetsBinding.instance.lifecycleState,
+        )) {
+      return;
+    }
+  }
   try {
     if (!context.mounted) return;
-    await Navigator.of(context).push(MaterialPageRoute<void>(builder: builder));
+    final route = MaterialPageRoute<void>(builder: builder);
+    await Navigator.of(context).push(route);
+    // The pop result arrives while the video widget still owns its decoder.
+    // Wait for the reverse transition and disposal before resuming audio.
+    await route.completed;
   } finally {
-    if (context.mounted && resumeAudio && entry != null &&
-        controller.queue.current?.entryId == entry &&
-        container.read(playerControllerProvider).playbackState == PlaybackState.paused &&
-        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+    if (context.mounted &&
+        shouldResumeAudioAfterVideo(
+          wasPlaying: resumeAudio,
+          openedEntryId: entry,
+          openedTrackId: trackId,
+          currentEntryId: controller.queue.current?.entryId,
+          currentTrackId: container.read(playerControllerProvider).currentTrack?.id,
+          currentState: container.read(playerControllerProvider).playbackState,
+          lifecycleState: WidgetsBinding.instance.lifecycleState,
+        )) {
       await controller.resume();
     }
   }

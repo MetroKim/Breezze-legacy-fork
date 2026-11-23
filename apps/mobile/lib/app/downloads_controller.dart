@@ -9,6 +9,8 @@ import '../core/api/breezze_api.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../core/audio/authorized_download_grant.dart';
+import '../core/audio/playback_source_policy.dart';
 import '../core/auth/auth_session.dart';
 import '../core/database/database_providers.dart';
 import '../core/database/outbox_sync_service.dart';
@@ -140,6 +142,10 @@ class DownloadsController extends StateNotifier<Map<String, double>> {
       _setStatus(track.id, 'unsupported_web');
       return;
     }
+    if (!canRequestOfflineDownload(track.id)) {
+      _setStatus(track.id, 'failed');
+      return;
+    }
     if (state.containsKey(track.id) || ['downloading', 'downloaded'].contains(ref.read(downloadJobStatusProvider)[track.id])) return;
     _tracks[track.id] = track;
     final cancellation = DownloadCancellation();
@@ -181,18 +187,15 @@ class DownloadsController extends StateNotifier<Map<String, double>> {
         return;
       }
 
-      final downloadUrl = authorization['url'] as String?;
-      if (downloadUrl == null || downloadUrl.isEmpty) { _setStatus(track.id, 'failed'); return; }
-      // The server issues a bounded offline lease, capped by the actual rights end.
-      // Keep the effective expiry in the local metadata so a device offline for
-      // longer than the lease cannot continue playing indefinitely.
-      final rightsExpiryRaw = (authorization['offlineLeaseExpiresAt']
-          ?? authorization['rightsExpiresAt']) as String?;
-      final rightsExpiry = rightsExpiryRaw == null
-          ? null
-          : DateTime.tryParse(rightsExpiryRaw)?.toUtc();
-      if (rightsExpiryRaw != null && rightsExpiry == null) return;
-      if (rightsExpiry != null && !rightsExpiry.isAfter(DateTime.now().toUtc())) {
+      final grant = AuthorizedDownloadGrant.fromResponse(authorization);
+      if (grant == null) {
+        _setStatus(track.id, 'failed');
+        return;
+      }
+      // The user may have signed out while the server was authorizing.
+      final currentAuth = ref.read(authSessionProvider);
+      if (currentAuth is! AuthSignedIn || currentAuth.userId != auth.userId) {
+        _setStatus(track.id, 'cancelled');
         return;
       }
 
@@ -204,16 +207,26 @@ class DownloadsController extends StateNotifier<Map<String, double>> {
       );
       final ok = await library.download(
         track,
-        downloadUrl: downloadUrl,
+        downloadUrl: grant.downloadUrl.toString(),
         ownerId: auth.userId,
         catalogTrackId: catalogId,
-        rightsExpiresAtUtc: rightsExpiry,
+        rightsExpiresAtUtc: grant.offlineLeaseExpiresAtUtc,
+        assetVersion: grant.assetVersion,
         cancellation: cancellation,
         onProgress: (progress) {
           if (mounted) state = {...state, track.id: progress};
         },
       );
 
+      final latestAuth = ref.read(authSessionProvider);
+      if (latestAuth is! AuthSignedIn || latestAuth.userId != auth.userId ||
+          cancellation.isCancelled) {
+        // Never promote an old-account transfer into a downloaded job.
+        // The old account's private file must not survive a race to logout.
+        await library.remove(track.id);
+        _setStatus(track.id, 'cancelled');
+        return;
+      }
       if (ok) {
         _setStatus(track.id, 'downloaded');
       } else if (!cancellation.isCancelled) {

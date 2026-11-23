@@ -90,6 +90,18 @@ class QueueManager {
     onQueueChanged?.call();
   }
 
+  /// Syncs the app queue to a native decoder's automatic playlist index.
+  /// This does not perform a second audio seek or prepare.
+  bool selectEntry(String entryId) {
+    final index = _entries.indexWhere((entry) => entry.entryId == entryId);
+    if (index < 0) return false;
+    if (index == _currentIndex) return true;
+    if (current != null) _history.add(current!);
+    _currentIndex = index;
+    onQueueChanged?.call();
+    return true;
+  }
+
   /// Removes by entryId; returns false when not found.
   bool remove(String entryId) {
     final idx = _entries.indexWhere((e) => e.entryId == entryId);

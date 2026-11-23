@@ -37,6 +37,7 @@ class _FakeEngine implements AudioEngineAdapter {
   bool failPlay = false;
   bool failSeek = false;
   Completer<void>? firstPrepare;
+  Completer<void>? nextPlay;
 
   @override
   Future<void> prepare(PlayableSource source) async {
@@ -53,6 +54,9 @@ class _FakeEngine implements AudioEngineAdapter {
     if (failPlay) throw StateError('play failed');
     playCount++;
     states.add(PlaybackState.playing);
+    final pending = nextPlay;
+    nextPlay = null;
+    if (pending != null) await pending.future;
   }
 
   @override
@@ -92,6 +96,39 @@ class _FakeEngine implements AudioEngineAdapter {
   }
 }
 
+class _FakeGaplessEngine extends _FakeEngine implements GaplessLocalQueueEngine {
+  final StreamController<int?> indices = StreamController<int?>.broadcast();
+  List<PlayableSource> playlist = [];
+  final List<int> seekIndices = [];
+
+  @override
+  bool get supportsGaplessLocalFiles => true;
+
+  @override
+  Stream<int?> get currentIndexStream => indices.stream;
+
+  @override
+  Future<void> prepareLocalPlaylist(
+    List<PlayableSource> sources, {
+    required int initialIndex,
+  }) async {
+    playlist = sources;
+    indices.add(initialIndex);
+  }
+
+  @override
+  Future<void> skipToIndex(int index) async {
+    seekIndices.add(index);
+    indices.add(index);
+  }
+
+  @override
+  Future<void> dispose() async {
+    await indices.close();
+    await super.dispose();
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -111,6 +148,72 @@ void main() {
   tearDown(() async {
     container.dispose();
     await engine.dispose();
+  });
+
+  test('local queue transitions natively without re-preparing the decoder',
+      () async {
+    final native = _FakeGaplessEngine();
+    final active = ProviderContainer(overrides: [
+      playbackResolverProvider.overrideWithValue(resolver),
+    ]);
+    final controller = active.read(playerControllerProvider.notifier);
+    controller.attachEngine(native);
+
+    await controller.playTrack(
+      trackId: 'device:local-a',
+      queue: const [
+        TrackInfo(id: 'device:local-a', title: 'A', localFilePath: '/tmp/a.m4a'),
+        TrackInfo(id: 'device:local-b', title: 'B', localFilePath: '/tmp/b.m4a'),
+      ],
+    );
+
+    expect(native.playlist.map((s) => s.trackId).toList(),
+        ['device:local-a', 'device:local-b']);
+    expect(native.prepared, isEmpty);
+    expect(native.playCount, 1);
+    native.indices.add(1);
+    await Future<void>.delayed(Duration.zero);
+    expect(active.read(playerControllerProvider).currentTrack?.id, 'device:local-b');
+    expect(controller.queue.current?.trackId, 'device:local-b');
+    expect(active.read(playerControllerProvider).playbackState,
+        PlaybackState.playing);
+
+    await controller.previous();
+    expect(native.seekIndices, [0]);
+    expect(active.read(playerControllerProvider).currentTrack?.id, 'device:local-a');
+    await controller.next();
+    expect(native.seekIndices, [0, 1]);
+    expect(active.read(playerControllerProvider).currentTrack?.id, 'device:local-b');
+
+    await controller.stop();
+    active.dispose();
+    await native.dispose();
+  });
+
+  test('editing a native local playlist uses the safe single-source path',
+      () async {
+    final native = _FakeGaplessEngine();
+    final active = ProviderContainer(overrides: [
+      playbackResolverProvider.overrideWithValue(resolver),
+    ]);
+    final controller = active.read(playerControllerProvider.notifier);
+    controller.attachEngine(native);
+    await controller.playTrack(
+      trackId: 'device:local-a',
+      queue: const [
+        TrackInfo(id: 'device:local-a', localFilePath: '/tmp/a.m4a'),
+        TrackInfo(id: 'device:local-b', localFilePath: '/tmp/b.m4a'),
+      ],
+    );
+    controller.playLast(const TrackInfo(
+      id: 'device:local-c', localFilePath: '/tmp/c.m4a',
+    ));
+    await Future<void>.delayed(Duration.zero);
+    expect(native.prepared, ['device:local-a']);
+    expect(controller.queue.upNext.map((e) => e.trackId),
+        ['device:local-b', 'device:local-c']);
+    active.dispose();
+    await native.dispose();
   });
 
   test('late resolver response cannot replace the latest selected track',
@@ -313,6 +416,28 @@ void main() {
 
     expect(container.read(playerControllerProvider).playbackState,
         PlaybackState.failed);
+  });
+
+  test('a late resume failure does not stop a newly selected track', () async {
+    final player = container.read(playerControllerProvider.notifier);
+    final first = player.playTrack(trackId: 'track-a');
+    resolver.complete('track-a');
+    await first;
+    await player.pause();
+
+    final pendingResume = Completer<void>();
+    engine.nextPlay = pendingResume;
+    await player.resume();
+
+    final second = player.playTrack(trackId: 'track-b');
+    resolver.complete('track-b');
+    await second;
+    pendingResume.completeError(StateError('old playback failed'));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(container.read(playerControllerProvider).currentTrack?.id, 'track-b');
+    expect(container.read(playerControllerProvider).playbackState,
+        PlaybackState.playing);
   });
 
 }

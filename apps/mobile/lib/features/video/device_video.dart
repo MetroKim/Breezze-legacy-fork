@@ -17,12 +17,15 @@ Future<void> pickDeviceVideo(BuildContext context) async {
           mimeTypes: ['video/mp4'], uniformTypeIdentifiers: ['public.mpeg-4', 'com.apple.m4v-video']),
     ]);
     if (file == null || !context.mounted) return;
-    await openVideoSurface(context, (_) => _DeviceVideo(file: file));
+    await openDeviceVideo(context, file);
   } catch (_) {
     if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not open this video.')));
   }
 }
+
+Future<void> openDeviceVideo(BuildContext context, XFile file) =>
+    openVideoSurface(context, (_) => _DeviceVideo(file: file));
 
 class _DeviceVideo extends StatefulWidget {
   final XFile file;

@@ -39,6 +39,10 @@ class PlayerController extends Notifier<PlayerState> {
   int _requestGeneration = 0;
   String? _autoAdvancedTrackId;
   Future<void> _engineOperations = Future<void>.value();
+  GaplessLocalQueueEngine? _gaplessEngine;
+  List<QueueEntry>? _gaplessEntries;
+  int? _gaplessIndex;
+  StreamSubscription<int?>? _gaplessIndexSub;
 
   String? _playbackSessionId;
   PlaybackSessionClient? _activeSessionClient;
@@ -261,6 +265,8 @@ class PlayerController extends Notifier<PlayerState> {
       if (currentTrackId != null) _scrobbles.onStop(currentTrackId);
       _positionSub?.cancel();
       _engineStateSub?.cancel();
+      _gaplessIndexSub?.cancel();
+      _disarmNativeGapless();
       _engine = null;
       _activeSource = null;
     });
@@ -273,7 +279,17 @@ class PlayerController extends Notifier<PlayerState> {
     _requestGeneration++;
     _positionSub?.cancel();
     _engineStateSub?.cancel();
+    _gaplessIndexSub?.cancel();
+    _disarmNativeGapless();
     _engine = engine;
+    if (engine is GaplessLocalQueueEngine) {
+      _gaplessIndexSub = engine.currentIndexStream.listen((index) {
+        if (index != null && identical(_engine, engine) &&
+            identical(_gaplessEngine, engine)) {
+          _syncNativeGaplessIndex(index);
+        }
+      });
+    }
 
     _positionSub = engine.positionStream.listen((pos) {
       if (!identical(_engine, engine)) return;
@@ -344,12 +360,128 @@ class PlayerController extends Notifier<PlayerState> {
     _requestGeneration++;
     _positionSub?.cancel();
     _engineStateSub?.cancel();
+    _gaplessIndexSub?.cancel();
     _positionSub = null;
     _engineStateSub = null;
+    _gaplessIndexSub = null;
+    _disarmNativeGapless();
     _engine = null;
     _activeSource = null;
   }
 
+
+  void _disarmNativeGapless() {
+    _gaplessEngine = null;
+    _gaplessEntries = null;
+    _gaplessIndex = null;
+  }
+
+  void _syncNativeGaplessIndex(int index) {
+    final entries = _gaplessEntries;
+    if (entries == null || index < 0 || index >= entries.length ||
+        _gaplessIndex == index) {
+      return;
+    }
+    _gaplessIndex = index;
+    final entry = entries[index];
+    final previousId = state.currentTrack?.id;
+    if (previousId != null) _scrobbles.onStop(previousId);
+    if (!_queue.selectEntry(entry.entryId)) return;
+    final next = _trackInfoFor(entry.trackId) ?? TrackInfo(id: entry.trackId);
+    state = state.copyWith(
+      currentTrack: next,
+      position: Duration.zero,
+      duration: next.duration,
+    );
+    if (state.playbackState == PlaybackState.playing) {
+      _scrobbles.onPlay(entry.trackId, DateTime.now().toUtc());
+    }
+  }
+
+  /// Editing a playing native playlist needs a fresh single-item source.
+  /// Never let a stale decoder queue disagree with the global queue.
+  void _invalidateNativeGapless() {
+    if (_gaplessEngine == null) return;
+    final track = state.currentTrack;
+    final position = state.position;
+    _disarmNativeGapless();
+    if (track != null) {
+      unawaited(_resolveAndPlay(track, initialPosition: position));
+    }
+  }
+
+  Future<void> _resolveAndPlayLocalPlaylist(
+    List<TrackInfo> tracks,
+    List<QueueEntry> entries,
+    int index,
+    GaplessLocalQueueEngine native,
+  ) async {
+    final requestId = ++_requestGeneration;
+    _disarmNativeGapless();
+    final selected = tracks[index];
+    final oldId = state.currentTrack?.id;
+    if (oldId != null) _scrobbles.onStop(oldId);
+    unawaited(_closePlaybackSession());
+    _autoAdvancedTrackId = null;
+    final source = PlayableSource(
+      trackId: selected.id,
+      streamUrl: selected.localFilePath!,
+      expiresAtUtc: DateTime.utc(9999),
+      isLocal: true,
+    );
+    _activeSource = source;
+    state = state.copyWith(
+      currentTrack: selected,
+      position: Duration.zero,
+      duration: selected.duration,
+    );
+    _machine.dispatch(StartRequested(selected.id, requestId: requestId));
+    _machine.dispatch(SourceResolved(
+      selected.id, source.streamUrl, requestId: requestId,
+    ));
+    if (_machine.state != PlaybackState.loading) return;
+    _gaplessEngine = native;
+    _gaplessEntries = List.of(entries);
+    _gaplessIndex = index;
+
+    try {
+      await _serializeEngineOperation(() async {
+        if (!_isCurrentRequest(requestId) || !identical(_engine, native)) return;
+        await native.prepareLocalPlaylist([
+          for (final track in tracks)
+            PlayableSource(
+              trackId: track.id,
+              streamUrl: track.localFilePath!,
+              expiresAtUtc: DateTime.utc(9999),
+              isLocal: true,
+            ),
+        ], initialIndex: index);
+        if (!_isCurrentRequest(requestId) || !identical(_engine, native)) return;
+        _machine.dispatch(MediaReady(requestId: requestId));
+        if (_machine.state != PlaybackState.buffering) return;
+        _machine.dispatch(PlayPressed());
+        if (_machine.state != PlaybackState.playing) return;
+        unawaited(native.play().catchError((Object error, StackTrace stack) {
+          if (!_isCurrentRequest(requestId)) return;
+          _disarmNativeGapless();
+          _machine.dispatch(SourceResolutionFailed(
+            'LOCAL_GAPLESS_PLAYBACK_FAILED', requestId: requestId,
+          ));
+        }));
+      });
+      if (_isCurrentRequest(requestId) &&
+          _machine.state == PlaybackState.playing) {
+        _scrobbles.onPlay(selected.id, DateTime.now().toUtc());
+      }
+    } catch (_) {
+      if (_isCurrentRequest(requestId)) {
+        _disarmNativeGapless();
+        _machine.dispatch(SourceResolutionFailed(
+          'LOCAL_GAPLESS_SETUP_FAILED', requestId: requestId,
+        ));
+      }
+    }
+  }
 
   // ----------------------------------------------------------------
   // Commands
@@ -387,6 +519,19 @@ class PlayerController extends Notifier<PlayerState> {
       for (final item in queue) {
         _trackInfos[item.id] = item;
       }
+      final engine = _engine;
+      if (queue.length >= 2 && engine is GaplessLocalQueueEngine &&
+          engine.supportsGaplessLocalFiles && !_queue.shuffle &&
+          _queue.repeatMode == RepeatMode.off &&
+          queue.every((item) => item.id.startsWith('device:') &&
+              item.localFilePath != null &&
+              item.localFilePath!.isNotEmpty &&
+              !item.localFilePath!.startsWith('content://'))) {
+        await _resolveAndPlayLocalPlaylist(
+          queue, entries, startIndex.clamp(0, queue.length - 1), engine,
+        );
+        return;
+      }
     } else {
       final entry = QueueEntry(
         entryId: 'qe-${DateTime.now().microsecondsSinceEpoch}',
@@ -417,6 +562,7 @@ class PlayerController extends Notifier<PlayerState> {
   /// and account sign-out so one user's media cannot continue into another
   /// account session.
   Future<void> stop() async {
+    _disarmNativeGapless();
     final requestId = ++_requestGeneration;
     final engine = _engine;
     final currentTrackId = state.currentTrack?.id;
@@ -458,6 +604,9 @@ class PlayerController extends Notifier<PlayerState> {
   Future<void> resume() async {
     final engine = _engine;
     if (engine == null || state.playbackState != PlaybackState.paused) return;
+    final requestId = _requestGeneration;
+    bool isCurrentResume() =>
+        _isCurrentRequest(requestId) && identical(_engine, engine);
     final activeSource = _activeSource;
     final currentTrack = state.currentTrack;
     if (activeSource != null && activeSource.isExpired && currentTrack != null) {
@@ -477,35 +626,40 @@ class PlayerController extends Notifier<PlayerState> {
       try {
         await (_activeSessionClient ?? _sessionClient).resume(sessionId);
       } catch (_) {
-        await _closePlaybackSession();
+        if (isCurrentResume()) await _closePlaybackSession();
         return;
       }
     }
+    if (!isCurrentResume()) return;
     _machine.dispatch(PlayPressed());
     try {
       await _serializeEngineOperation(() async {
+        if (!isCurrentResume()) return;
         unawaited(engine.play().catchError(
           (Object error, StackTrace stackTrace) {
+            if (!isCurrentResume()) return;
             final currentTrackId = state.currentTrack?.id;
             if (currentTrackId != null) _scrobbles.onStop(currentTrackId);
             unawaited(_closePlaybackSession());
             _machine.dispatch(SourceResolutionFailed(
               'RESUME_FAILED',
-              requestId: _machine.activeRequestId,
+              requestId: requestId,
             ));
           },
         ));
       });
-      if (sessionId != null && state.playbackState == PlaybackState.playing) {
+      if (isCurrentResume() && sessionId != null &&
+          state.playbackState == PlaybackState.playing) {
         _startHeartbeatTimer();
       }
     } catch (_) {
+      if (!isCurrentResume()) return;
       await _closePlaybackSession();
       final currentTrackId = state.currentTrack?.id;
       if (currentTrackId != null) _scrobbles.onStop(currentTrackId);
       _machine.dispatch(SourceResolutionFailed(
         'RESUME_FAILED',
-        requestId: _machine.activeRequestId,
+        requestId: requestId,
       ));
     }
   }
@@ -543,9 +697,33 @@ class PlayerController extends Notifier<PlayerState> {
     }
   }
 
+  Future<bool> _seekNativeGaplessEntry(QueueEntry entry) async {
+    final engine = _gaplessEngine;
+    final entries = _gaplessEntries;
+    if (engine == null || entries == null) return false;
+    final index = entries.indexWhere((item) => item.entryId == entry.entryId);
+    if (index < 0) return false;
+    final generation = _requestGeneration;
+    try {
+      await _serializeEngineOperation(() async {
+        if (_isCurrentRequest(generation) && identical(_gaplessEngine, engine)) {
+          await engine.skipToIndex(index);
+        }
+      });
+      if (_isCurrentRequest(generation) && identical(_gaplessEngine, engine)) {
+        _syncNativeGaplessIndex(index);
+      }
+      return true;
+    } catch (_) {
+      _disarmNativeGapless();
+      return false;
+    }
+  }
+
   Future<void> next() async {
     final entry = _queue.advance();
     if (entry == null) return;
+    if (await _seekNativeGaplessEntry(entry)) return;
     final info = _trackInfoFor(entry.trackId) ?? TrackInfo(id: entry.trackId);
     await _resolveAndPlay(info);
   }
@@ -553,12 +731,21 @@ class PlayerController extends Notifier<PlayerState> {
   Future<void> previous() async {
     final entry = _queue.previous();
     if (entry == null) return;
+    if (await _seekNativeGaplessEntry(entry)) return;
     final info = _trackInfoFor(entry.trackId) ?? TrackInfo(id: entry.trackId);
     await _resolveAndPlay(info);
   }
 
   Future<bool> _tryDeezerPreview(TrackInfo track, int requestId) async {
-    if (!isYouTubeSongId(track.id) || !_isCurrentRequest(requestId)) return false;
+    if (!_isCurrentRequest(requestId)) return false;
+    if (isDeezerTrackId(track.id)) {
+      await _playDeezerPreview(TrackInfo(
+        id: 'bz:deezer_preview:${track.id.split(':').last}',
+        title: track.title, artist: track.artist, artworkUrl: track.artworkUrl,
+      ));
+      return true;
+    }
+    if (!isYouTubeSongId(track.id)) return false;
     final title = track.title;
     final artist = track.artist;
     if (title == null || artist == null || title.isEmpty || artist.isEmpty) return false;
@@ -613,6 +800,7 @@ class PlayerController extends Notifier<PlayerState> {
       insertedAtMs: DateTime.now().millisecondsSinceEpoch,
       trackVersion: 'v1',
     ));
+    _invalidateNativeGapless();
   }
 
   /// Appends a track to the end of the current queue.
@@ -642,6 +830,7 @@ class PlayerController extends Notifier<PlayerState> {
       insertedAtMs: DateTime.now().millisecondsSinceEpoch,
       trackVersion: 'v1',
     ));
+    _invalidateNativeGapless();
   }
 
   /// Register a Last.fm/ListenBrainz-compatible scrobbling destination.
@@ -649,8 +838,15 @@ class PlayerController extends Notifier<PlayerState> {
     _scrobbles.register(scrobbler);
   }
 
-  void toggleShuffle() => _queue.toggleShuffle();
-  void cycleRepeat() => _queue.cycleRepeat();
+  void toggleShuffle() {
+    _queue.toggleShuffle();
+    _invalidateNativeGapless();
+  }
+
+  void cycleRepeat() {
+    _queue.cycleRepeat();
+    _invalidateNativeGapless();
+  }
 
   TrackInfo? _trackInfoFor(String trackId) => _trackInfos[trackId];
 
@@ -674,6 +870,7 @@ class PlayerController extends Notifier<PlayerState> {
     TrackInfo info, {
     Duration initialPosition = Duration.zero,
   }) async {
+    _disarmNativeGapless();
     if (isMetadataOnlyTrackId(info.id) && info.localFilePath == null) return;
     final requestId = ++_requestGeneration;
     final previousTrackId = state.currentTrack?.id;
@@ -809,7 +1006,7 @@ class PlayerController extends Notifier<PlayerState> {
       // Keep the legacy reporter only for local/offline media, which has no
       // server playback session.
       if (source.sessionId == null && !info.id.startsWith('device:') &&
-          !isDeezerPreview(info.id) && !isYouTubeSongId(info.id)) {
+          !isDeezerPreview(info.id) && !isExternalRecordingId(info.id)) {
         unawaited(
           ref.read(playHistoryReporterProvider)(info).catchError((_) {}),
         );

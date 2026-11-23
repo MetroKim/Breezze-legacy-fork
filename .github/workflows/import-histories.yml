@@ -1,0 +1,27 @@
+name: Import Breezze project histories
+on:
+  push:
+    branches: [integration/import-histories]
+permissions:
+  contents: write
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create additive integration branch
+        run: |
+          set -euo pipefail
+          git fetch https://github.com/MetroKim/MetroMusic.git main
+          test "$(git rev-parse FETCH_HEAD)" = 'a13d3f29d26f68527de6bd45f5c7bc2d05cf3fe3'
+          git read-tree a13d3f29d26f68527de6bd45f5c7bc2d05cf3fe3
+          git read-tree --prefix=legacy/kotlin-client/ 3871bb6458a288f7405258fa17def23d5e3ab66d
+          git rm -r --cached --ignore-unmatch .github/workflows >/dev/null
+          git read-tree --prefix=.github/workflows/ HEAD:.github/workflows
+          tree=$(git write-tree)
+          git config user.name 'Breezze integration'
+          git config user.email 'noreply@github.com'
+          commit=$(git commit-tree "$tree" -p 3871bb6458a288f7405258fa17def23d5e3ab66d -p a13d3f29d26f68527de6bd45f5c7bc2d05cf3fe3 -m 'Combine the Breezze client and Flutter application histories')
+          git push origin "$commit:refs/heads/integration/audio-first"

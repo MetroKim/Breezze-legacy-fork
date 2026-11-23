@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart' show kReleaseMode;
-import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -70,29 +69,25 @@ class AuthError extends AuthState {
 /// iOS Keychain / Android Keystore-backed secure storage.
 class AuthSessionController extends Notifier<AuthState> {
   Future<bool>? _refreshInFlight;
-  int _socialAttempt = 0;
+  String? _pendingSupabaseAccessToken;
   static const _refreshTokenKey = 'breezze.refresh_token';
   static const _secureStorage = FlutterSecureStorage();
   late final PendingLogoutQueue _pendingLogouts =
       PendingLogoutQueue(SecurePendingLogoutPersistence(_secureStorage));
 
   static const _configuredApiUrl = String.fromEnvironment('BREEZZE_API_URL');
-  static const _authMode = String.fromEnvironment('BREEZZE_AUTH_PROVIDER', defaultValue: 'breezze');
-  static const _supabaseUrl = String.fromEnvironment('BREEZZE_SUPABASE_URL');
-  static const _supabasePublishableKey = String.fromEnvironment('BREEZZE_SUPABASE_PUBLISHABLE_KEY');
+  // Publishable project credentials are public. No service-role keys belong
+  // in app builds. Every listener uses the dedicated Breezze Supabase project.
+  static const _supabaseUrl = String.fromEnvironment(
+    'BREEZZE_SUPABASE_URL',
+    defaultValue: 'https://djwvyjtebmsavhcrmhxf.supabase.co',
+  );
+  static const _supabasePublishableKey = String.fromEnvironment(
+    'BREEZZE_SUPABASE_PUBLISHABLE_KEY',
+    defaultValue: 'sb_publishable_ZloCmmQPo86OqHbH3Yqgsw_xZGPqSi3',
+  );
+  bool get usesSupabaseAuth => true;
 
-  /// Feature-gated until the dedicated Breezze Supabase project and account
-  /// migration have passed acceptance. Legacy users continue signing in.
-  bool get usesSupabaseAuth => _authMode == 'supabase';
-
-  /// Auth0 Universal Login is the primary account flow when selected.
-  /// Existing Breezze device sessions remain valid during migration.
-  bool get usesAuth0Auth =>
-      _authMode == 'auth0' || _authMode == 'auth0_embedded';
-
-  /// Auth0 database email/password sign-in uses the existing Breezze
-  /// Flutter screen. Enabled only after the API/tenant have been verified.
-  bool get usesAuth0Embedded => _authMode == 'auth0_embedded';
   late final SupabaseAuthTransport _supabase = SupabaseAuthTransport(
     projectUrl: _supabaseUrl,
     publishableKey: _supabasePublishableKey,
@@ -191,32 +186,17 @@ class AuthSessionController extends Notifier<AuthState> {
     String password, {
     String? displayName,
   }) async {
-    if (usesAuth0Auth && !usesAuth0Embedded) {
-      await socialLogin('auth0');
-      return;
-    }
+    _pendingSupabaseAccessToken = null;
     state = const AuthSigningIn();
     try {
-      if (usesAuth0Embedded) {
-        await _api.registerAuth0Embedded(email, password,
-            displayName: displayName);
+      final token = await _supabase.signUp(
+        email.trim(), password, displayName: displayName,
+      );
+      if (token == null) {
         state = const AuthError('EMAIL_VERIFICATION_REQUIRED');
         return;
       }
-      if (usesSupabaseAuth) {
-        final token = await _supabase.signUp(
-          email, password, displayName: displayName,
-        );
-        if (token == null) {
-          state = const AuthError('EMAIL_VERIFICATION_REQUIRED');
-          return;
-        }
-        await _persistSession(await _api.exchangeSupabaseSession(token));
-      } else {
-        final response = await _api.register(email, password,
-            displayName: displayName);
-        await _persistSession(response);
-      }
+      await _persistSession(await _api.exchangeSupabaseSession(token));
     } on SupabaseAuthTransportException catch (e) {
       state = AuthError(e.code);
     } on BreezzeApiException catch (e) {
@@ -227,124 +207,55 @@ class AuthSessionController extends Notifier<AuthState> {
   }
 
   Future<void> login(String email, String password) async {
-    if (usesAuth0Auth && !usesAuth0Embedded) {
-      await socialLogin('auth0');
+    _pendingSupabaseAccessToken = null;
+    state = const AuthSigningIn();
+    try {
+      final token = await _supabase.signIn(email.trim(), password);
+      _pendingSupabaseAccessToken = token;
+      await _persistSession(await _api.exchangeSupabaseSession(token));
+      _pendingSupabaseAccessToken = null;
+    } on SupabaseAuthTransportException catch (e) {
+      _pendingSupabaseAccessToken = null;
+      state = AuthError(e.code);
+    } on BreezzeApiException catch (e) {
+      if (e.code != 'SUPABASE_ACCOUNT_LINK_REQUIRED') {
+        _pendingSupabaseAccessToken = null;
+      }
+      state = AuthError(e.code);
+    } catch (_) {
+      _pendingSupabaseAccessToken = null;
+      state = const AuthError('NETWORK_ERROR');
+    }
+  }
+
+  /// The only legacy migration path. A verified Supabase login must have
+  /// happened first. Prove possession of the old Breezze password before
+  /// the server can transfer existing library, playlists and user ID.
+  Future<void> claimExistingLibrary(String email, String oldPassword) async {
+    final token = _pendingSupabaseAccessToken;
+    if (token == null || state is! AuthError ||
+        (state as AuthError).code != 'SUPABASE_ACCOUNT_LINK_REQUIRED') {
+      state = const AuthError('SUPABASE_CLAIM_NOT_READY');
       return;
     }
     state = const AuthSigningIn();
     try {
-      if (usesAuth0Embedded) {
-        await _persistSession(await _api.loginAuth0Embedded(email, password));
-        return;
-      }
-      if (usesSupabaseAuth) {
-        final token = await _supabase.signIn(email, password);
-        await _persistSession(await _api.exchangeSupabaseSession(token));
-      } else {
-        final response = await _api.login(email, password);
-        await _persistSession(response);
-      }
-    } on SupabaseAuthTransportException catch (e) {
-      state = AuthError(e.code);
+      await _persistSession(await _api.claimSupabaseLegacyAccount(
+        accessToken: token,
+        email: email.trim(),
+        legacyPassword: oldPassword,
+      ));
+      _pendingSupabaseAccessToken = null;
     } on BreezzeApiException catch (e) {
-      state = AuthError(e.code);
+      state = AuthError(e.code == 'INVALID_CREDENTIALS'
+          ? 'SUPABASE_LEGACY_PASSWORD_INVALID' : e.code);
     } catch (_) {
       state = const AuthError('NETWORK_ERROR');
     }
   }
 
-  /// Temporary migration route for an existing Breezze password account.
-  /// New users authenticate through Auth0 Universal Login instead.
-  Future<void> loginLegacy(String email, String password) async {
-    state = const AuthSigningIn();
-    try {
-      await _persistSession(await _api.login(email, password));
-    } on BreezzeApiException catch (e) {
-      state = AuthError(e.code);
-    } catch (_) {
-      state = const AuthError('NETWORK_ERROR');
-    }
-  }
-
-  /// Authenticate or explicitly link the current Breezze session to Auth0.
-  /// Browser never sees Breezze access/refresh tokens.
-  Future<void> socialLogin(
-    String provider, {
-    Map<String, dynamic>? preparedFlow,
-    bool linkExisting = false,
-  }) async {
-    if (linkExisting && (provider != 'auth0' || state is! AuthSignedIn)) {
-      throw StateError('AUTH0_LINK_REQUIRES_SIGNED_IN_ACCOUNT');
-    }
-    final attempt = ++_socialAttempt;
-    if (!linkExisting) state = const AuthSigningIn(social: true);
-    try {
-      // Preloaded flow keeps launchUrl on the original pointer activation
-      // for browsers that block asynchronous popups.
-      final flow = preparedFlow ?? (linkExisting
-          ? await _api.startAuth0Link()
-          : await _api.startSocialLogin(provider));
-      if (attempt != _socialAttempt) return;
-      final flowId = flow['id'];
-      final pollSecret = flow['secret'];
-      final authorizationUrl = Uri.tryParse(flow['authorizationUrl'] as String? ?? '');
-      if (flowId is! String || pollSecret is! String ||
-          authorizationUrl == null || authorizationUrl.scheme != 'https') {
-        throw const BreezzeApiException(
-          code: 'SOCIAL_FLOW_INVALID',
-          message: 'The sign-in provider returned an invalid authorization URL.',
-        );
-      }
-      if (!await launchUrl(authorizationUrl, mode: LaunchMode.externalApplication)) {
-        throw const BreezzeApiException(
-          code: 'SOCIAL_BROWSER_UNAVAILABLE',
-          message: 'Cannot open the secure system browser for sign-in.',
-        );
-      }
-      // The system browser never sees Breezze refresh tokens. The app
-      // redeems a single-use random pairing secret through the own backend.
-      for (var n = 0; n < 150; n++) {
-        await Future<void>.delayed(const Duration(seconds: 2));
-        if (attempt != _socialAttempt) return;
-        final result = await _api.pollSocialLogin(flowId: flowId, secret: pollSecret);
-        if (attempt != _socialAttempt) return;
-        if (result['status'] == 'pending') continue;
-        if (linkExisting && result['status'] == 'linked' && result['linked'] == true) {
-          return;
-        }
-        if (!linkExisting && result['status'] == 'completed' && result['session'] is Map) {
-          final session = AuthResponse.fromJson(
-            Map<String, dynamic>.from(result['session'] as Map),
-          );
-          if (attempt != _socialAttempt) return;
-          await _persistSession(session);
-          return;
-        }
-        throw BreezzeApiException(
-          code: result['code'] as String? ?? 'SOCIAL_AUTH_FAILED',
-          message: 'The identity provider could not complete the sign-in.',
-        );
-      }
-      throw const BreezzeApiException(
-        code: 'SOCIAL_AUTH_EXPIRED',
-        message: 'The browser sign-in timed out. You can try again.',
-      );
-    } on BreezzeApiException catch (e) {
-      if (linkExisting) rethrow;
-      if (attempt == _socialAttempt) state = AuthError(e.code);
-    } catch (_) {
-      if (linkExisting) rethrow;
-      if (attempt == _socialAttempt) state = const AuthError('SOCIAL_AUTH_FAILED');
-    }
-  }
-
-  Future<void> linkAuth0({Map<String, dynamic>? preparedFlow}) =>
-      socialLogin('auth0', linkExisting: true, preparedFlow: preparedFlow);
-
-  void cancelSocialLogin() {
-    ++_socialAttempt;
-    if (state is AuthSigningIn) state = const AuthSignedOut();
-  }
+  Future<void> requestPasswordReset(String email) =>
+      _supabase.requestPasswordReset(email);
 
   Future<void> beginMfaSetup(String password) async {
     final current = state;
@@ -424,6 +335,7 @@ class AuthSessionController extends Notifier<AuthState> {
       }
     }
     _api.accessToken = null;
+    _pendingSupabaseAccessToken = null;
     try {
       await _secureStorage.delete(key: _refreshTokenKey);
     } catch (_) {}

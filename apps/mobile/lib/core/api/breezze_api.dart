@@ -72,11 +72,8 @@ class BreezzeApi {
     var response = await send();
     if (response.statusCode == 401 &&
         path != '/auth/refresh' &&
-        path != '/auth/login' &&
-        path != '/auth/register' &&
-        !path.startsWith('/auth/auth0/') &&
+        !path.startsWith('/auth/supabase/') &&
         path != '/auth/logout' &&
-        !path.startsWith('/auth/social/') &&
         !path.startsWith('/auth/mfa/') &&
         onUnauthorized != null &&
         await onUnauthorized!()) {
@@ -264,177 +261,27 @@ class BreezzeApi {
 
   // ---- auth ----
 
-  Future<AuthResponse> register(
-    String email,
-    String password, {
-    String? displayName,
+  /// Exchange the short-lived verified Supabase access JWT for a revocable
+  /// Breezze device session. App API permissions remain server-controlled.
+  Future<AuthResponse> exchangeSupabaseSession(String accessToken) async {
+    final response = await _post('/auth/supabase/exchange', {
+      'accessToken': accessToken,
+    });
+    return AuthResponse.fromJson(response);
+  }
+
+  Future<AuthResponse> claimSupabaseLegacyAccount({
+    required String accessToken,
+    required String email,
+    required String legacyPassword,
   }) async {
-    final data = await _post('/auth/register', {
+    final response = await _post('/auth/supabase/claim', {
+      'accessToken': accessToken,
       'email': email,
-      'password': password,
-      if (displayName != null) 'displayName': displayName,
+      'legacyPassword': legacyPassword,
     });
-    return AuthResponse.fromJson(data);
+    return AuthResponse.fromJson(response);
   }
-
-  /// Breezze-rendered account fields, forwarded only to our trusted API.
-  /// Auth0's Native client secret is never embedded into Flutter.
-  Future<AuthResponse> loginAuth0Embedded(String email, String password) async {
-    final result = await _post('/auth/auth0/login', {
-      'email': email,
-      'password': password,
-    });
-    return AuthResponse.fromJson(result);
-  }
-
-  Future<void> registerAuth0Embedded(String email, String password, {
-    String? displayName,
-  }) async {
-    await _post('/auth/auth0/register', {
-      'email': email,
-      'password': password,
-      if (displayName != null && displayName.trim().isNotEmpty)
-        'displayName': displayName.trim(),
-    });
-  }
-
-  Future<void> sendAuth0PasswordReset(String email) async {
-    await _post('/auth/auth0/password/reset', {'email': email});
-  }
-
-  Future<void> linkAuth0Embedded(String email, String password) async {
-    await _post('/auth/auth0/link', {'email': email, 'password': password});
-  }
-
-  /// Universal system-browser OAuth pairing: same backend on Android,
-  /// iOS, macOS, Windows, Linux and web. The app never receives provider
-  /// access tokens and the browser never receives Breezze session tokens.
-  Future<Map<String, dynamic>> socialProviders() =>
-      _get('/auth/social/providers');
-
-  Future<Map<String, dynamic>> startSocialLogin(String provider) {
-    if (provider != 'google' && provider != 'apple' && provider != 'auth0') {
-      throw ArgumentError.value(provider, 'provider');
-    }
-    return _post('/auth/social/$provider/start', {});
-  }
-
-  /// Requires an existing Breezze access token; an Auth0 account is linked
-  /// only after both the current Breezze JWT and Auth0's signed ID token
-  /// have been verified by the backend.
-  Future<Map<String, dynamic>> startAuth0Link() =>
-      _post('/auth/social/auth0/link/start', {});
-
-  Future<Map<String, dynamic>> pollSocialLogin({
-    required String flowId,
-    required String secret,
-  }) => _post('/auth/social/poll', {
-    'id': flowId,
-    'secret': secret,
-  });
-
-  Future<AuthResponse> login(String email, String password) async {
-    final data = await _post('/auth/login', {
-      'email': email,
-      'password': password,
-    });
-    return AuthResponse.fromJson(data);
-  }
-
-  Future<Map<String, dynamic>> resolveCatalogTrack({
-    required String externalId,
-    required String source,
-    required String title,
-    required String artistName,
-    required int durationSec,
-  }) =>
-      _post('/catalog/resolve', {
-        'externalId': externalId,
-        'source': source,
-        'title': title,
-        'artistName': artistName,
-        'durationSec': durationSec,
-      });
-
-  Future<Map<String, dynamic>> startPlaybackSession({
-    String? trackId,
-    String? externalTrackId,
-    String? requestedQuality,
-    String? providerId,
-    String? providerTrackId,
-    String? canonicalTrackId,
-  }) =>
-      _post('/playback/sessions', {
-        if (externalTrackId != null) 'externalTrackId': externalTrackId,
-        if (trackId != null) 'trackId': trackId,
-        if (requestedQuality != null) 'requestedQuality': requestedQuality,
-        if (providerId != null) 'providerId': providerId,
-        if (providerTrackId != null) 'providerTrackId': providerTrackId,
-        if (canonicalTrackId != null) 'canonicalTrackId': canonicalTrackId,
-      });
-
-  Future<Map<String, dynamic>> playbackHeartbeat({
-    required String sessionId,
-    required String eventId,
-    required int sequence,
-  }) =>
-      _post('/playback/sessions/${Uri.encodeComponent(sessionId)}/heartbeat', {
-        'eventId': eventId,
-        'sequence': sequence,
-      });
-
-  Future<void> pausePlaybackSession(String sessionId) async {
-    await _post('/playback/sessions/${Uri.encodeComponent(sessionId)}/pause', const {});
-  }
-
-  Future<void> resumePlaybackSession(String sessionId) async {
-    await _post('/playback/sessions/${Uri.encodeComponent(sessionId)}/resume', const {});
-  }
-
-  Future<void> stopPlaybackSession(String sessionId) async {
-    await _post('/playback/sessions/${Uri.encodeComponent(sessionId)}/stop', const {});
-  }
-
-  Future<Map<String, dynamic>> resolveProviderPlayback({
-    required String providerId,
-    required String providerTrackId,
-    required String canonicalTrackId,
-    required String territory,
-  }) =>
-      _post('/playback/provider/resolve', {
-        'providerId': providerId,
-        'providerTrackId': providerTrackId,
-        'canonicalTrackId': canonicalTrackId,
-        'territory': territory,
-      });
-
-  Future<Map<String, dynamic>> resolvePlayback({
-    required String trackId,
-    required String territory,
-    String? requestedQuality,
-  }) =>
-      _post('/playback/resolve', {
-        'trackId': trackId,
-        'territory': territory,
-        if (requestedQuality != null) 'requestedQuality': requestedQuality,
-      });
-
-  Future<Map<String, dynamic>> authorizeDownload({
-    required String trackId,
-    required String territory,
-  }) =>
-      // Territory is derived by the trusted Cloudflare edge. Keep the
-      // parameter temporarily for caller compatibility, but never transmit it.
-      _post('/downloads', {
-        'trackId': trackId,
-      });
-
-  Future<Map<String, dynamic>> revalidateOfflineLease({
-    required String trackId,
-    required String territory,
-  }) =>
-      // Territory is derived by the trusted Cloudflare edge, not the client.
-      _post('/downloads/$trackId/revalidate', {});
 
   Future<AuthResponse> refresh(String refreshToken) async {
     final data = await _post('/auth/refresh', {
@@ -469,19 +316,6 @@ class BreezzeApi {
       'newPassword': newPassword,
     });
   }
-
-  /// Exchange a server-verified Supabase user access token for Breezze's own
-  /// device session. Never persist this external token or use an admin API key.
-  Future<AuthResponse> exchangeSupabaseSession(String accessToken) async {
-    final response = await _post('/auth/supabase/exchange', {
-      'accessToken': accessToken,
-    });
-    return AuthResponse.fromJson(response);
-  }
-
-  /// Link a Supabase identity only while an existing Breezze user is signed in.
-  Future<Map<String, dynamic>> linkSupabaseIdentity(String accessToken) =>
-      _post('/auth/supabase/link', {'accessToken': accessToken});
 
   Future<Map<String, dynamic>> me() async => _get('/auth/me');
 

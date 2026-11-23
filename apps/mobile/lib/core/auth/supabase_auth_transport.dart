@@ -75,6 +75,12 @@ class SupabaseAuthTransport {
     return token;
   }
 
+  /// The reset message has a link to the approved Breezze recovery page.
+  /// The response deliberately does not reveal whether an email exists.
+  Future<void> requestPasswordReset(String email) async {
+    await _send(_endpoint('/recover'), {'email': email.trim()});
+  }
+
   /// With email confirmation enabled Supabase returns a user but no session.
   /// The UI must ask the listener to confirm the email, never fake success.
   Future<String?> signUp(String email, String password, {String? displayName}) async {

@@ -84,6 +84,10 @@ class AuthSessionController extends Notifier<AuthState> {
   /// Feature-gated until the dedicated Breezze Supabase project and account
   /// migration have passed acceptance. Legacy users continue signing in.
   bool get usesSupabaseAuth => _authMode == 'supabase';
+
+  /// Auth0 Universal Login is the primary account flow when selected.
+  /// Existing Breezze device sessions remain valid during migration.
+  bool get usesAuth0Auth => _authMode == 'auth0';
   late final SupabaseAuthTransport _supabase = SupabaseAuthTransport(
     projectUrl: _supabaseUrl,
     publishableKey: _supabasePublishableKey,
@@ -182,6 +186,10 @@ class AuthSessionController extends Notifier<AuthState> {
     String password, {
     String? displayName,
   }) async {
+    if (usesAuth0Auth) {
+      await socialLogin('auth0');
+      return;
+    }
     state = const AuthSigningIn();
     try {
       if (usesSupabaseAuth) {
@@ -208,6 +216,10 @@ class AuthSessionController extends Notifier<AuthState> {
   }
 
   Future<void> login(String email, String password) async {
+    if (usesAuth0Auth) {
+      await socialLogin('auth0');
+      return;
+    }
     state = const AuthSigningIn();
     try {
       if (usesSupabaseAuth) {
@@ -226,16 +238,37 @@ class AuthSessionController extends Notifier<AuthState> {
     }
   }
 
+  /// Temporary migration route for an existing Breezze password account.
+  /// New users authenticate through Auth0 Universal Login instead.
+  Future<void> loginLegacy(String email, String password) async {
+    state = const AuthSigningIn();
+    try {
+      await _persistSession(await _api.login(email, password));
+    } on BreezzeApiException catch (e) {
+      state = AuthError(e.code);
+    } catch (_) {
+      state = const AuthError('NETWORK_ERROR');
+    }
+  }
+
+  /// Authenticate or explicitly link the current Breezze session to Auth0.
+  /// Browser never sees Breezze access/refresh tokens.
   Future<void> socialLogin(
     String provider, {
     Map<String, dynamic>? preparedFlow,
+    bool linkExisting = false,
   }) async {
+    if (linkExisting && (provider != 'auth0' || state is! AuthSignedIn)) {
+      throw StateError('AUTH0_LINK_REQUIRES_SIGNED_IN_ACCOUNT');
+    }
     final attempt = ++_socialAttempt;
-    state = const AuthSigningIn(social: true);
+    if (!linkExisting) state = const AuthSigningIn(social: true);
     try {
       // Preloaded flow keeps launchUrl on the original pointer activation
       // for browsers that block asynchronous popups.
-      final flow = preparedFlow ?? await _api.startSocialLogin(provider);
+      final flow = preparedFlow ?? (linkExisting
+          ? await _api.startAuth0Link()
+          : await _api.startSocialLogin(provider));
       if (attempt != _socialAttempt) return;
       final flowId = flow['id'];
       final pollSecret = flow['secret'];
@@ -261,7 +294,10 @@ class AuthSessionController extends Notifier<AuthState> {
         final result = await _api.pollSocialLogin(flowId: flowId, secret: pollSecret);
         if (attempt != _socialAttempt) return;
         if (result['status'] == 'pending') continue;
-        if (result['status'] == 'completed' && result['session'] is Map) {
+        if (linkExisting && result['status'] == 'linked' && result['linked'] == true) {
+          return;
+        }
+        if (!linkExisting && result['status'] == 'completed' && result['session'] is Map) {
           final session = AuthResponse.fromJson(
             Map<String, dynamic>.from(result['session'] as Map),
           );
@@ -279,11 +315,16 @@ class AuthSessionController extends Notifier<AuthState> {
         message: 'The browser sign-in timed out. You can try again.',
       );
     } on BreezzeApiException catch (e) {
+      if (linkExisting) rethrow;
       if (attempt == _socialAttempt) state = AuthError(e.code);
     } catch (_) {
+      if (linkExisting) rethrow;
       if (attempt == _socialAttempt) state = const AuthError('SOCIAL_AUTH_FAILED');
     }
   }
+
+  Future<void> linkAuth0({Map<String, dynamic>? preparedFlow}) =>
+      socialLogin('auth0', linkExisting: true, preparedFlow: preparedFlow);
 
   void cancelSocialLogin() {
     ++_socialAttempt;

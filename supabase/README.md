@@ -2,7 +2,7 @@
 
 ## Architecture decision
 
-**Supabase:** hosted PostgreSQL database and future Auth provider for listener identity, plus an optional **private avatar bucket**.  
+**Supabase:** hosted PostgreSQL database for Breezze operational data, plus an optional **private avatar bucket**. **Auth0:** new hosted account and Universal Login identity provider; it is separate from Supabase Postgres.  
 **Cloudflare:** private R2 `breezze-media` bucket for Breezze-owned/rights-cleared audio, `breezze-media` Worker for HMAC-signed ranged reads, and `breezze-api-edge` Worker for HTTPS/CORS/authenticated API routing.  
 **Railway:** existing NestJS app, Redis and metadata services continue while Supabase database/Auth migration is validated.  
 **Flutter:** connects to the NestJS API and approved providers; no database admin key, R2 credential or service-role key is ever embedded in an app binary.
@@ -23,9 +23,9 @@ Flutter --provider-approved HTTPS------> Authorized streaming partners
 
 - Cloudflare R2 activation now works; the private `breezze-media` bucket was created on November 23, 2026 in EEUR with Standard storage.
 - R2 media Worker binding is `MEDIA_BUCKET`; its HMAC signing secret name is `MEDIA_SIGNING_KEY`. Objects are `audio/{canonicalTrackId}/{variant}`; every URL has an expiry and HMAC validated before any R2 read.
-- Supabase account currently contains **one inactive project, `metro bot`**, which is unrelated; it was intentionally not modified. A dedicated Breezze Supabase project must be chosen or created before applying any schema change, and the user's organization and any applicable billing must be confirmed.
+- Supabase account currently contains **one inactive project, `metro bot`**, which is unrelated; it was intentionally not modified. A dedicated Breezze Supabase project must be chosen or created before applying any schema change, and applicable billing must be confirmed.
 - Current Railway Postgres is authoritative until backups, migrations, count/key reconciliation, encrypted data compatibility, rollback and new service credentials have been tested.
-- Existing NestJS Argon2id/JWT user sessions cannot be blindly replaced by Supabase Auth: migrate IDs/password-based logins, verified emails, OAuth identities, MFA, session revocation and 30-day deletion semantics as a coordinated operation.
+- Existing NestJS Argon2id/JWT user sessions cannot be blindly replaced by Auth0: migrate IDs/password-based logins, verified emails, OAuth identities, MFA, session revocation and account deletion semantics as a coordinated operation. Until migration, Breezze issues its own revocable app sessions after validating Auth0's signed identity.
 
 ## Database integration with the existing code
 

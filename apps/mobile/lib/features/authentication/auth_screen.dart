@@ -25,6 +25,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   final _displayName = TextEditingController();
   final _mfaCode = TextEditingController();
   bool _registerMode = false;
+  bool _legacyFallback = false;
   bool _revealPassword = false;
   late Future<Map<String, dynamic>> _socialProviders;
   bool _mfaBusy = false;
@@ -33,7 +34,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   @override
   void initState() {
     super.initState();
-    _registerMode = widget.startInRegisterMode;
+    _registerMode = ref.read(authSessionProvider.notifier).usesAuth0Auth
+        ? false
+        : widget.startInRegisterMode;
     _socialProviders = _prepareSocialFlows();
   }
 
@@ -41,11 +44,25 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     // Do not start old NestJS-owned Google/Apple OAuth flows when Supabase
     // is the configured auth authority. Provider OAuth can be enabled only
     // after it is configured for the selected Supabase project.
-    if (ref.read(authSessionProvider.notifier).usesSupabaseAuth) {
+    final session = ref.read(authSessionProvider.notifier);
+    if (session.usesSupabaseAuth) {
       return <String, dynamic>{};
     }
+    if (session.usesAuth0Auth) {
+      try {
+        final api = session.api;
+        final flags = await api.socialProviders()
+            .timeout(const Duration(seconds: 10));
+        if (flags['auth0'] != true) return <String, dynamic>{'auth0': false};
+        final flow = await api.startSocialLogin('auth0')
+            .timeout(const Duration(seconds: 10));
+        return <String, dynamic>{'auth0': true, 'auth0Flow': flow};
+      } catch (_) {
+        return <String, dynamic>{'auth0': false};
+      }
+    }
     try {
-      final api = ref.read(authSessionProvider.notifier).api;
+      final api = session.api;
       final flags = await api.socialProviders()
           .timeout(const Duration(seconds: 10));
       final result = Map<String, dynamic>.from(flags);
@@ -97,6 +114,10 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
 
   Future<void> _submit() async {
     final controller = ref.read(authSessionProvider.notifier);
+    if (controller.usesAuth0Auth && _legacyFallback) {
+      await controller.loginLegacy(_email.text.trim(), _password.text);
+      return;
+    }
     if (_registerMode) {
       await controller.register(
         _email.text.trim(),
@@ -177,11 +198,125 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     );
   }
 
+  /// Auth0's hosted Universal Login owns passwords, registration and MFA.
+  /// Breezze receives only a one-time server-issued device session.
+  Widget _auth0LoginPanel(BuildContext context, {
+    required bool busy,
+    required String? error,
+  }) {
+    final theme = Theme.of(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (MediaQuery.sizeOf(context).width < 980) ...[
+          Align(
+            alignment: Alignment.centerLeft,
+            child: BzRibbonLogo(width: 168, color: theme.bzText1),
+          ),
+          const SizedBox(height: 28),
+        ],
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 34),
+          decoration: BoxDecoration(
+            color: theme.bzSurface1,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: theme.bzSeparator),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Welcome to Breezze',
+                  style: theme.textTheme.headlineMedium?.copyWith(
+                      fontWeight: FontWeight.w800, letterSpacing: -0.7)),
+              const SizedBox(height: 8),
+              Text(
+                'Sign in or create an account securely with Auth0.',
+                style: TextStyle(fontSize: BzType.body, color: theme.bzText2),
+              ),
+              const SizedBox(height: 28),
+              FutureBuilder<Map<String, dynamic>>(
+                future: _socialProviders,
+                builder: (context, snapshot) {
+                  final providers = snapshot.data ?? const <String, dynamic>{};
+                  final flow = providers['auth0Flow'];
+                  final ready = _freshFlow(flow);
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      FilledButton(
+                        onPressed: ready && !busy
+                            ? () => _signInWith('auth0', flow as Map)
+                            : null,
+                        child: const Text('Continue securely'),
+                      ),
+                      if (!ready) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          snapshot.connectionState == ConnectionState.waiting
+                              ? 'Preparing secure sign-in…'
+                              : 'Auth0 is not configured or this sign-in has expired.',
+                          style: TextStyle(color: theme.bzText2, fontSize: 12),
+                        ),
+                        TextButton(
+                          onPressed: busy ? null : () => setState(() {
+                            _socialProviders = _prepareSocialFlows();
+                          }),
+                          child: const Text('Retry secure sign-in'),
+                        ),
+                      ],
+                    ],
+                  );
+                },
+              ),
+              if (error != null) ...[
+                const SizedBox(height: 12),
+                Semantics(
+                  liveRegion: true,
+                  child: Text(_errorText(error),
+                      style: TextStyle(color: theme.bzError, fontSize: 13)),
+                ),
+              ],
+              const SizedBox(height: 18),
+              OutlinedButton(
+                onPressed: busy
+                    ? null
+                    : () => Navigator.of(context).push(MaterialPageRoute<void>(
+                          builder: (_) => Scaffold(
+                            appBar: AppBar(), body: const SearchScreen()),
+                        )),
+                child: const Text('Browse music without signing in'),
+              ),
+              const SizedBox(height: 12),
+              TextButton(
+                onPressed: busy ? null : () => setState(() {
+                  _legacyFallback = true;
+                  _registerMode = false;
+                }),
+                child: const Text('Existing Breezze account? Use your password to link it'),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'By continuing, you agree to our Terms and Privacy Policy.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: theme.bzText2, fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _loginPanel(BuildContext context, {
     required bool busy,
     required bool socialBusy,
     required String? error,
   }) {
+    final session = ref.read(authSessionProvider.notifier);
+    if (session.usesAuth0Auth && !_legacyFallback) {
+      return _auth0LoginPanel(context, busy: busy, error: error);
+    }
     final theme = Theme.of(context);
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -698,12 +833,16 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
         return 'Cannot reach Breezze. Check your connection.';
       case 'SOCIAL_ACCOUNT_LINK_REQUIRED':
         return 'An account already uses this email. Sign in with email first.';
+      case 'AUTH0_ACCOUNT_LINK_REQUIRED':
+        return 'This email already belongs to Breezze. Sign in with your existing password, then link Auth0 in Account settings.';
       case 'SOCIAL_AUTH_EXPIRED':
         return 'The browser sign-in expired. Try again.';
       case 'SOCIAL_PROVIDER_NOT_CONFIGURED':
         return 'This sign-in provider is not configured yet.';
       case 'SOCIAL_AUTH_FAILED':
         return 'Secure sign-in did not finish. Please retry or use email.';
+      case 'AUTH0_DOMAIN_NOT_CONFIGURED':
+        return 'Auth0 is not configured for Breezze yet.';
       default:
         return 'Something went wrong. Try again.';
     }

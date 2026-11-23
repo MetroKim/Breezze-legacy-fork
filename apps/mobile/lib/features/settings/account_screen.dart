@@ -24,12 +24,18 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
   List<Map<String, dynamic>> _sessions = const [];
   bool _loading = true;
   bool _saving = false;
+  Future<Map<String, dynamic>>? _auth0LinkFlow;
   String? _error;
   String? _email;
 
   @override
   void initState() {
     super.initState();
+    final session = ref.read(authSessionProvider.notifier);
+    if (session.usesAuth0Auth) {
+      _auth0LinkFlow = session.api.startAuth0Link()
+          .catchError((Object _) => <String, dynamic>{});
+    }
     _load();
   }
 
@@ -152,6 +158,36 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
       );
     } catch (_) {
       if (mounted) setState(() => _error = 'That session could not be revoked.');
+    }
+  }
+
+  Future<void> _linkAuth0() async {
+    if (_saving) return;
+    setState(() { _saving = true; _error = null; });
+    try {
+      final session = ref.read(authSessionProvider.notifier);
+      final prepared = await _auth0LinkFlow;
+      final expiry = prepared?['expiresAt'];
+      final expiresAt = expiry is String ? DateTime.tryParse(expiry) : null;
+      final ready = expiresAt != null &&
+          expiresAt.isAfter(DateTime.now().toUtc().add(const Duration(seconds: 15)));
+      await session.linkAuth0(
+        preparedFlow: ready ? prepared : await session.api.startAuth0Link(),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Auth0 sign-in linked to your Breezze account')),
+      );
+    } catch (_) {
+      if (mounted) setState(() {
+        _error = 'Could not link Auth0. Verify that both accounts have the same email and retry.';
+      });
+    } finally {
+      if (mounted) {
+        _auth0LinkFlow = ref.read(authSessionProvider.notifier).api.startAuth0Link()
+            .catchError((Object _) => <String, dynamic>{});
+        setState(() => _saving = false);
+      }
     }
   }
 
@@ -354,6 +390,15 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                     MaterialPageRoute(builder: (_) => const ChangePasswordScreen()),
                   ),
                 ),
+                if (ref.read(authSessionProvider.notifier).usesAuth0Auth)
+                  ListTile(
+                    leading: const BzSvgIcon(name: 'settings'),
+                    title: const Text('Link Auth0 sign-in'),
+                    subtitle: const Text(
+                        'Keep your library when switching from your existing Breezze account'),
+                    trailing: const BzSvgIcon(name: 'chevron-right'),
+                    onTap: _saving ? null : _linkAuth0,
+                  ),
                 const SizedBox(height: 28),
                 Text('ACTIVE SESSIONS', style: theme.textTheme.labelLarge),
                 const SizedBox(height: 8),

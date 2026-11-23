@@ -1,9 +1,11 @@
 import {
-  Body, Controller, Get, Header, HttpCode, HttpStatus, Param, Post, Query, Res,
+  Body, Controller, Get, Header, HttpCode, HttpStatus, Param, Post, Query, Res, UseGuards,
 } from '@nestjs/common';
 import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import type { Response } from 'express';
 import { SocialAuthService } from './social-auth.service';
+import { JwtAuthGuard } from './jwt-auth.guard';
+import { CurrentUser } from './current-user.decorator';
 
 class PollSocialFlowDto {
   @IsString()
@@ -52,6 +54,14 @@ export class SocialAuthController {
   }
 
   @Header('Cache-Control', 'no-store')
+  @Post('auth0/link/start')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  startAuth0Link(@CurrentUser() userId: string) {
+    return this.social.start('auth0', userId);
+  }
+
+  @Header('Cache-Control', 'no-store')
   @Post(':provider/start')
   @HttpCode(HttpStatus.OK)
   start(@Param('provider') provider: string) {
@@ -74,6 +84,18 @@ export class SocialAuthController {
     @Res() res: Response,
   ) {
     const ok = await this.social.callback('google', state, code, error);
+    this.respond(res, ok);
+  }
+
+  @Header('Cache-Control', 'no-store')
+  @Get('callback/auth0')
+  async auth0Callback(
+    @Query('state') state: string,
+    @Query('code') code: string | undefined,
+    @Query('error') error: string | undefined,
+    @Res() res: Response,
+  ) {
+    const ok = await this.social.callback('auth0', state, code, error);
     this.respond(res, ok);
   }
 

@@ -283,11 +283,17 @@ class BreezzeApi {
       _get('/auth/social/providers');
 
   Future<Map<String, dynamic>> startSocialLogin(String provider) {
-    if (provider != 'google' && provider != 'apple') {
+    if (provider != 'google' && provider != 'apple' && provider != 'auth0') {
       throw ArgumentError.value(provider, 'provider');
     }
     return _post('/auth/social/$provider/start', {});
   }
+
+  /// Requires an existing Breezze access token; an Auth0 account is linked
+  /// only after both the current Breezze JWT and Auth0's signed ID token
+  /// have been verified by the backend.
+  Future<Map<String, dynamic>> startAuth0Link() =>
+      _post('/auth/social/auth0/link/start', {});
 
   Future<Map<String, dynamic>> pollSocialLogin({
     required String flowId,

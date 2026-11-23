@@ -12,7 +12,7 @@ import {
 import { PrismaService } from '../prisma.service';
 import { AuthService } from './auth.service';
 
-type Provider = 'google' | 'apple';
+type Provider = 'google' | 'apple' | 'auth0';
 type OAuthConfig = {
   clientId: string;
   clientSecret: string;
@@ -45,7 +45,7 @@ export class SocialAuthService {
   ) {}
 
   private validateProvider(input: string): Provider {
-    if (input === 'google' || input === 'apple') return input;
+    if (input === 'google' || input === 'apple' || input === 'auth0') return input;
     throw new BadRequestException('SOCIAL_PROVIDER_UNSUPPORTED');
   }
 
@@ -72,28 +72,46 @@ export class SocialAuthService {
   }
 
   private config(provider: Provider): OAuthConfig {
-    const configured = provider === 'google'
+    // Only Auth0's managed tenant domains are accepted as OAuth origins.
+    // An arbitrary URL here would send the server-side client secret to an
+    // attacker during code exchange (SSRF/token exfiltration).
+    const auth0Domain = process.env.AUTH0_DOMAIN?.trim().toLowerCase() ?? '';
+    const auth0Trusted = /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.auth0\.com$/.test(auth0Domain);
+    const configured = provider === 'auth0'
       ? {
-          clientId: process.env.GOOGLE_OAUTH_CLIENT_ID ?? '',
-          clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET ?? '',
-          redirectUri: process.env.GOOGLE_OAUTH_REDIRECT_URI ?? '',
-          authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
-          tokenEndpoint: 'https://oauth2.googleapis.com/token',
-          issuer: 'https://accounts.google.com',
-          jwksEndpoint: 'https://www.googleapis.com/oauth2/v3/certs',
+          clientId: process.env.AUTH0_CLIENT_ID ?? '',
+          clientSecret: process.env.AUTH0_CLIENT_SECRET ?? '',
+          redirectUri: process.env.AUTH0_REDIRECT_URI ?? '',
+          authorizationEndpoint: auth0Trusted ? `https://${auth0Domain}/authorize` : '',
+          tokenEndpoint: auth0Trusted ? `https://${auth0Domain}/oauth/token` : '',
+          issuer: auth0Trusted ? `https://${auth0Domain}/` : '',
+          jwksEndpoint: auth0Trusted ? `https://${auth0Domain}/.well-known/jwks.json` : '',
         }
-      : {
-          clientId: process.env.APPLE_SERVICE_ID ?? '',
-          clientSecret: '',
-          redirectUri: process.env.APPLE_OAUTH_REDIRECT_URI ?? '',
-          authorizationEndpoint: 'https://appleid.apple.com/auth/authorize',
-          tokenEndpoint: 'https://appleid.apple.com/auth/token',
-          issuer: 'https://appleid.apple.com',
-          jwksEndpoint: 'https://appleid.apple.com/auth/keys',
-        };
+      : provider === 'google'
+        ? {
+            clientId: process.env.GOOGLE_OAUTH_CLIENT_ID ?? '',
+            clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET ?? '',
+            redirectUri: process.env.GOOGLE_OAUTH_REDIRECT_URI ?? '',
+            authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+            tokenEndpoint: 'https://oauth2.googleapis.com/token',
+            issuer: 'https://accounts.google.com',
+            jwksEndpoint: 'https://www.googleapis.com/oauth2/v3/certs',
+          }
+        : {
+            clientId: process.env.APPLE_SERVICE_ID ?? '',
+            clientSecret: '',
+            redirectUri: process.env.APPLE_OAUTH_REDIRECT_URI ?? '',
+            authorizationEndpoint: 'https://appleid.apple.com/auth/authorize',
+            tokenEndpoint: 'https://appleid.apple.com/auth/token',
+            issuer: 'https://appleid.apple.com',
+            jwksEndpoint: 'https://appleid.apple.com/auth/keys',
+          };
+    if (provider === 'auth0' && !auth0Trusted) {
+      throw new ServiceUnavailableException('AUTH0_DOMAIN_NOT_CONFIGURED');
+    }
     if (!configured.clientId ||
         !configured.redirectUri ||
-        (provider === 'google' && !configured.clientSecret) ||
+        ((provider === 'google' || provider === 'auth0') && !configured.clientSecret) ||
         (provider === 'apple' && (!process.env.APPLE_TEAM_ID ||
           !process.env.APPLE_KEY_ID || !process.env.APPLE_PRIVATE_KEY))) {
       throw new ServiceUnavailableException('SOCIAL_PROVIDER_NOT_CONFIGURED');
@@ -112,6 +130,10 @@ export class SocialAuthService {
       google: Boolean(process.env.GOOGLE_OAUTH_CLIENT_ID &&
         process.env.GOOGLE_OAUTH_CLIENT_SECRET &&
         process.env.GOOGLE_OAUTH_REDIRECT_URI),
+      auth0: Boolean(process.env.AUTH0_DOMAIN &&
+        process.env.AUTH0_CLIENT_ID && process.env.AUTH0_CLIENT_SECRET &&
+        process.env.AUTH0_REDIRECT_URI &&
+        /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.auth0\.com$/.test(process.env.AUTH0_DOMAIN.trim().toLowerCase())),
       apple: Boolean(process.env.APPLE_SERVICE_ID &&
         process.env.APPLE_TEAM_ID &&
         process.env.APPLE_KEY_ID &&
@@ -120,8 +142,16 @@ export class SocialAuthService {
     };
   }
 
-  async start(rawProvider: string) {
+  async start(rawProvider: string, linkUserId?: string) {
     const provider = this.validateProvider(rawProvider);
+    if (linkUserId) {
+      if (provider !== 'auth0') throw new BadRequestException('SOCIAL_LINK_PROVIDER_UNSUPPORTED');
+      // User ID comes ONLY from the authenticated, session-checked API guard.
+      const owner = await this.prisma.user.findUnique({
+        where: { id: linkUserId }, select: { id: true },
+      });
+      if (!owner) throw new UnauthorizedException('SOCIAL_LINK_OWNER_MISSING');
+    }
     const config = this.config(provider);
     const state = randomBytes(32).toString('base64url');
     const pollSecret = randomBytes(32).toString('base64url');
@@ -130,6 +160,7 @@ export class SocialAuthService {
     const flow = await this.prisma.socialLoginFlow.create({
       data: {
         provider,
+        linkUserId: linkUserId ?? null,
         stateHash: digest(state),
         pollSecretHash: digest(pollSecret),
         nonce,
@@ -143,13 +174,13 @@ export class SocialAuthService {
     endpoint.searchParams.set('client_id', config.clientId);
     endpoint.searchParams.set('redirect_uri', config.redirectUri);
     endpoint.searchParams.set('response_type', 'code');
-    endpoint.searchParams.set('scope', provider === 'google' ? 'openid email profile' : 'name email');
+    endpoint.searchParams.set('scope', provider === 'apple' ? 'name email' : 'openid email profile');
     endpoint.searchParams.set('state', state);
     endpoint.searchParams.set('nonce', nonce);
-    if (provider === 'google') {
+    if (provider !== 'apple') {
       endpoint.searchParams.set('code_challenge', createHash('sha256').update(codeVerifier).digest('base64url'));
       endpoint.searchParams.set('code_challenge_method', 'S256');
-      endpoint.searchParams.set('prompt', 'select_account');
+      if (provider === 'google') endpoint.searchParams.set('prompt', 'select_account');
     } else {
       endpoint.searchParams.set('response_mode', 'form_post');
     }
@@ -171,7 +202,7 @@ export class SocialAuthService {
       client_secret: provider === 'apple' ? this.appleSecret() : cfg.clientSecret,
       redirect_uri: cfg.redirectUri,
     });
-    if (provider === 'google') params.set('code_verifier', codeVerifier);
+    if (provider !== 'apple') params.set('code_verifier', codeVerifier);
     const response = await fetch(cfg.tokenEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -193,9 +224,11 @@ export class SocialAuthService {
     const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString()) as {
       sub?: string; iss?: string; aud?: string | string[]; exp?: number; iat?: number;
       nonce?: string; email?: string; email_verified?: boolean | string; name?: string;
+      azp?: string;
     };
     if (header.alg !== 'RS256' || !header.kid ||
         (provider === 'google' ? !['accounts.google.com', 'https://accounts.google.com'].includes(payload.iss ?? '') : payload.iss !== cfg.issuer) ||
+        (Array.isArray(payload.aud) && payload.aud.length > 1 && payload.azp !== cfg.clientId) ||
         !(Array.isArray(payload.aud) ? payload.aud.includes(cfg.clientId) : payload.aud === cfg.clientId) ||
         typeof payload.exp !== 'number' || payload.exp < Math.floor(Date.now() / 1000) ||
         typeof payload.iat !== 'number' || payload.iat > Math.floor(Date.now() / 1000) + 60 ||
@@ -313,10 +346,45 @@ export class SocialAuthService {
       const cfg = this.config(provider);
       const token = await this.exchangeCode(provider, code, cfg, flow.codeVerifier);
       const identity = await this.verifyIdentity(token, provider, cfg, flow.nonce);
-      const userId = await this.findOrCreateUser(
-        provider, identity.subject, identity.email, identity.name,
-      );
-      const session = await this.auth.issueVerifiedSocialSession(userId);
+      let session: unknown;
+      if (provider === 'auth0' && flow.linkUserId) {
+        // Explicit linking requires BOTH an existing Breezze session to
+        // initiate the flow and this independent, verified Auth0 challenge.
+        const owner = await this.prisma.user.findUnique({
+          where: { id: flow.linkUserId },
+          select: { id: true, email: true },
+        });
+        if (!owner || owner.email.trim().toLowerCase() !== identity.email) {
+          throw new ConflictException('AUTH0_LINK_EMAIL_MISMATCH');
+        }
+        const bound = await this.prisma.socialAuthIdentity.findUnique({
+          where: { provider_subject: { provider: 'auth0', subject: identity.subject } },
+          select: { userId: true },
+        });
+        if (bound?.userId && bound.userId !== owner.id) {
+          throw new ConflictException('AUTH0_IDENTITY_ALREADY_LINKED');
+        }
+        if (!bound) {
+          try {
+            await this.prisma.socialAuthIdentity.create({
+              data: { userId: owner.id, provider: 'auth0', subject: identity.subject },
+            });
+          } catch (caught) {
+            if ((caught as { code?: string })?.code !== 'P2002') throw caught;
+            const current = await this.prisma.socialAuthIdentity.findUnique({
+              where: { provider_subject: { provider: 'auth0', subject: identity.subject } },
+              select: { userId: true },
+            });
+            if (current?.userId !== owner.id) throw new ConflictException('AUTH0_IDENTITY_ALREADY_LINKED');
+          }
+        }
+        session = { linked: true };
+      } else {
+        const userId = await this.findOrCreateUser(
+          provider, identity.subject, identity.email, identity.name,
+        );
+        session = await this.auth.issueVerifiedSocialSession(userId);
+      }
       await this.prisma.socialLoginFlow.update({
         where: { id: flow.id },
         data: { status: 'completed', resultCiphertext: this.encryptResult(session),
@@ -325,7 +393,7 @@ export class SocialAuthService {
       return true;
     } catch (caught) {
       const code = caught instanceof ConflictException
-        ? 'SOCIAL_ACCOUNT_LINK_REQUIRED'
+        ? (provider === 'auth0' ? 'AUTH0_ACCOUNT_LINK_REQUIRED' : 'SOCIAL_ACCOUNT_LINK_REQUIRED')
         : (error ? 'SOCIAL_PROVIDER_CANCELLED' : 'SOCIAL_AUTH_FAILED');
       await this.prisma.socialLoginFlow.update({
         where: { id: flow.id },
@@ -353,6 +421,10 @@ export class SocialAuthService {
       data: { status: 'consumed', resultCiphertext: null },
     });
     if (consumed.count !== 1) throw new UnauthorizedException('SOCIAL_FLOW_CONSUMED');
-    return { status: 'completed', session: this.decryptResult(flow.resultCiphertext) };
+    const result = this.decryptResult(flow.resultCiphertext);
+    // A link confirmation must never be misinterpreted as a new bearer session.
+    return result.linked === true
+      ? { status: 'linked', linked: true }
+      : { status: 'completed', session: result };
   }
 }

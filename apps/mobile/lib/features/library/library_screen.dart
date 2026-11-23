@@ -309,7 +309,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
           // --radius-pill. Solid active fill, no outline chips: the Apple
           // Music Library filter treatment (quiet chrome, artwork forward).
           SizedBox(
-            height: 36,
+            height: 52,
             child: ListView.separated(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               scrollDirection: Axis.horizontal,

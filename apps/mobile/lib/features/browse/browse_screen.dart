@@ -156,7 +156,7 @@ class _BrowseScreenState extends ConsumerState<BrowseScreen> {
                   // Capsule pill genre rail — spec §2.3 tab indicators use
                   // --radius-pill. Same treatment as Library and Search.
                   SizedBox(
-                    height: 36,
+                    height: 52,
                     child: ListView.separated(
                       scrollDirection: Axis.horizontal,
                       itemCount: _genres.length,

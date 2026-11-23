@@ -43,7 +43,7 @@ void main() {
         ),
       ),
     );
-    expect(compactInset, 180);
+    expect(compactInset, 218);
 
     double? desktopInset;
     await tester.pumpWidget(

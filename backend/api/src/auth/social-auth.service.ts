@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
   Injectable,
   ServiceUnavailableException,
   UnauthorizedException,
@@ -217,7 +218,7 @@ export class SocialAuthService {
     return data.id_token;
   }
 
-  private async verifyIdentity(token: string, provider: Provider, cfg: OAuthConfig, expectedNonce: string) {
+  private async verifyIdentity(token: string, provider: Provider, cfg: OAuthConfig, expectedNonce: string | null) {
     const parts = token.split('.');
     if (parts.length !== 3) throw new UnauthorizedException('SOCIAL_TOKEN_INVALID');
     const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString()) as { alg?: string; kid?: string };
@@ -232,7 +233,7 @@ export class SocialAuthService {
         !(Array.isArray(payload.aud) ? payload.aud.includes(cfg.clientId) : payload.aud === cfg.clientId) ||
         typeof payload.exp !== 'number' || payload.exp < Math.floor(Date.now() / 1000) ||
         typeof payload.iat !== 'number' || payload.iat > Math.floor(Date.now() / 1000) + 60 ||
-        !payload.sub || !safeCompare(payload.nonce ?? '', expectedNonce) ||
+        !payload.sub || (expectedNonce !== null && !safeCompare(payload.nonce ?? '', expectedNonce)) ||
         payload.email_verified === false || payload.email_verified === 'false' ||
         !payload.email) {
       throw new UnauthorizedException('SOCIAL_IDENTITY_INVALID');
@@ -329,6 +330,165 @@ export class SocialAuthService {
     ]).toString()) as Record<string, unknown>;
   }
 
+
+  /** Explicit feature gate: Password Realm flow cannot support every MFA,
+   * SSO and passkey feature. No Auth0 tokens or client secrets reach Flutter. */
+  private embeddedSettings(): { config: OAuthConfig; connection: string } {
+    const domain = process.env.AUTH0_DOMAIN?.trim().toLowerCase() ?? '';
+    const clientId = process.env.AUTH0_NATIVE_CLIENT_ID?.trim() ?? '';
+    const connection = process.env.AUTH0_DB_CONNECTION?.trim() ?? '';
+    if (process.env.AUTH0_EMBEDDED_ENABLED !== 'true' ||
+        !/^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.auth0\.com$/.test(domain) ||
+        !clientId || clientId.length > 256 ||
+        !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(connection)) {
+      throw new ServiceUnavailableException('AUTH0_EMBEDDED_NOT_CONFIGURED');
+    }
+    return { connection, config: {
+      clientId, clientSecret: '', redirectUri: '',
+      authorizationEndpoint: '',
+      tokenEndpoint: 'https://' + domain + '/oauth/token',
+      issuer: 'https://' + domain + '/',
+      jwksEndpoint: 'https://' + domain + '/.well-known/jwks.json',
+    } };
+  }
+
+  private async authenticateEmbedded(email: string, password: string) {
+    const { config, connection } = this.embeddedSettings();
+    let response: Response;
+    try {
+      response = await fetch(config.tokenEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({
+          grant_type: 'http://auth0.com/oauth/grant-type/password-realm',
+          client_id: config.clientId, realm: connection,
+          username: email.trim().toLowerCase(), password,
+          scope: 'openid email profile',
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch (_) {
+      throw new ServiceUnavailableException('AUTH0_EMBEDDED_UNAVAILABLE');
+    }
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({})) as Record<string, unknown>;
+      if (response.status === 429 || data.error === 'too_many_attempts') {
+        throw new HttpException('RATE_LIMITED', 429);
+      }
+      if (data.error === 'mfa_required') {
+        throw new UnauthorizedException('AUTH0_EMBEDDED_MFA_REQUIRED');
+      }
+      if (data.error === 'invalid_grant' || data.error === 'invalid_user_password') {
+        throw new UnauthorizedException('INVALID_CREDENTIALS');
+      }
+      throw new ServiceUnavailableException('AUTH0_EMBEDDED_UNAVAILABLE');
+    }
+    const data = await response.json().catch(() => ({})) as Record<string, unknown>;
+    if (typeof data.id_token !== 'string' || data.id_token.length > 8192) {
+      throw new ServiceUnavailableException('AUTH0_ID_TOKEN_MISSING');
+    }
+    // Password Realm grants do not carry an authorization-request nonce.
+    // This token is received exclusively from pinned Auth0 over backend TLS.
+    return this.verifyIdentity(data.id_token, 'auth0', config, null);
+  }
+
+  async embeddedLogin(email: string, password: string) {
+    const identity = await this.authenticateEmbedded(email, password);
+    const userId = await this.findOrCreateUser(
+      'auth0', identity.subject, identity.email, identity.name,
+    );
+    return this.auth.issueVerifiedSocialSession(userId);
+  }
+
+  async embeddedRegister(email: string, password: string, displayName?: string) {
+    const { config, connection } = this.embeddedSettings();
+    let response: Response;
+    try {
+      response = await fetch(config.issuer + 'dbconnections/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({
+          client_id: config.clientId, connection,
+          email: email.trim().toLowerCase(), password,
+          ...(displayName ? { user_metadata: { display_name: displayName.trim().slice(0, 64) } } : {}),
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch (_) {
+      throw new ServiceUnavailableException('AUTH0_EMBEDDED_UNAVAILABLE');
+    }
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({})) as Record<string, unknown>;
+      if (response.status === 429) throw new HttpException('RATE_LIMITED', 429);
+      if (response.status === 409 || data.code === 'user_exists') {
+        throw new ConflictException('EMAIL_TAKEN');
+      }
+      if (response.status >= 500) throw new ServiceUnavailableException('AUTH0_EMBEDDED_UNAVAILABLE');
+      throw new BadRequestException('AUTH0_SIGNUP_REJECTED');
+    }
+    // Never issue a Breezze session until Auth0 verifies the email on login.
+    return { verificationRequired: true };
+  }
+
+  async embeddedReset(email: string) {
+    const { config, connection } = this.embeddedSettings();
+    let response: Response;
+    try {
+      response = await fetch(config.issuer + 'dbconnections/change_password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({
+          client_id: config.clientId, connection, email: email.trim().toLowerCase(),
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch (_) {
+      throw new ServiceUnavailableException('AUTH0_EMBEDDED_UNAVAILABLE');
+    }
+    if (response.status === 429) throw new HttpException('RATE_LIMITED', 429);
+    if (response.status >= 500) throw new ServiceUnavailableException('AUTH0_EMBEDDED_UNAVAILABLE');
+    // Generic response avoids revealing whether the address has an account.
+    return { sent: true };
+  }
+
+  private async linkVerifiedAuth0Identity(
+    ownerId: string, identity: { subject: string; email: string },
+  ): Promise<void> {
+    const owner = await this.prisma.user.findUnique({
+      where: { id: ownerId }, select: { id: true, email: true },
+    });
+    if (!owner || owner.email.trim().toLowerCase() !== identity.email) {
+      throw new ConflictException('AUTH0_LINK_EMAIL_MISMATCH');
+    }
+    const bound = await this.prisma.socialAuthIdentity.findUnique({
+      where: { provider_subject: { provider: 'auth0', subject: identity.subject } },
+      select: { userId: true },
+    });
+    if (bound?.userId && bound.userId !== owner.id) {
+      throw new ConflictException('AUTH0_IDENTITY_ALREADY_LINKED');
+    }
+    if (!bound) {
+      try {
+        await this.prisma.socialAuthIdentity.create({
+          data: { userId: owner.id, provider: 'auth0', subject: identity.subject },
+        });
+      } catch (caught) {
+        if ((caught as { code?: string })?.code !== 'P2002') throw caught;
+        const current = await this.prisma.socialAuthIdentity.findUnique({
+          where: { provider_subject: { provider: 'auth0', subject: identity.subject } },
+          select: { userId: true },
+        });
+        if (current?.userId !== owner.id) throw new ConflictException('AUTH0_IDENTITY_ALREADY_LINKED');
+      }
+    }
+  }
+
+  async embeddedLink(userId: string, email: string, password: string) {
+    const identity = await this.authenticateEmbedded(email, password);
+    await this.linkVerifiedAuth0Identity(userId, identity);
+    return { linked: true };
+  }
+
   async callback(providerInput: string, state: string, code?: string, error?: string) {
     const provider = this.validateProvider(providerInput);
     if (!state || state.length > 256) throw new BadRequestException('SOCIAL_STATE_INVALID');
@@ -350,34 +510,7 @@ export class SocialAuthService {
       if (provider === 'auth0' && flow.linkUserId) {
         // Explicit linking requires BOTH an existing Breezze session to
         // initiate the flow and this independent, verified Auth0 challenge.
-        const owner = await this.prisma.user.findUnique({
-          where: { id: flow.linkUserId },
-          select: { id: true, email: true },
-        });
-        if (!owner || owner.email.trim().toLowerCase() !== identity.email) {
-          throw new ConflictException('AUTH0_LINK_EMAIL_MISMATCH');
-        }
-        const bound = await this.prisma.socialAuthIdentity.findUnique({
-          where: { provider_subject: { provider: 'auth0', subject: identity.subject } },
-          select: { userId: true },
-        });
-        if (bound?.userId && bound.userId !== owner.id) {
-          throw new ConflictException('AUTH0_IDENTITY_ALREADY_LINKED');
-        }
-        if (!bound) {
-          try {
-            await this.prisma.socialAuthIdentity.create({
-              data: { userId: owner.id, provider: 'auth0', subject: identity.subject },
-            });
-          } catch (caught) {
-            if ((caught as { code?: string })?.code !== 'P2002') throw caught;
-            const current = await this.prisma.socialAuthIdentity.findUnique({
-              where: { provider_subject: { provider: 'auth0', subject: identity.subject } },
-              select: { userId: true },
-            });
-            if (current?.userId !== owner.id) throw new ConflictException('AUTH0_IDENTITY_ALREADY_LINKED');
-          }
-        }
+        await this.linkVerifiedAuth0Identity(flow.linkUserId, identity);
         session = { linked: true };
       } else {
         const userId = await this.findOrCreateUser(

@@ -131,7 +131,11 @@ export class CloudflareAwareThrottlerGuard
       const email = req.body?.email;
       if (
         req.method === 'POST' &&
-        path.endsWith('/auth/login') &&
+        (path.endsWith('/auth/login') ||
+          path.endsWith('/auth/auth0/login') ||
+          path.endsWith('/auth/auth0/link') ||
+          path.endsWith('/auth/auth0/register') ||
+          path.endsWith('/auth/auth0/password/reset')) &&
         typeof email === 'string' &&
         email.trim().length > 0
       ) {

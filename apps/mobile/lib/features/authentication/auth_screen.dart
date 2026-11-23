@@ -38,6 +38,12 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   }
 
   Future<Map<String, dynamic>> _prepareSocialFlows() async {
+    // Do not start old NestJS-owned Google/Apple OAuth flows when Supabase
+    // is the configured auth authority. Provider OAuth can be enabled only
+    // after it is configured for the selected Supabase project.
+    if (ref.read(authSessionProvider.notifier).usesSupabaseAuth) {
+      return <String, dynamic>{};
+    }
     try {
       final api = ref.read(authSessionProvider.notifier).api;
       final flags = await api.socialProviders()
@@ -678,6 +684,16 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
         return 'That email is already registered.';
       case 'INVALID_CREDENTIALS':
         return 'Wrong email or password.';
+      case 'EMAIL_VERIFICATION_REQUIRED':
+        return 'Check your inbox and verify your email before signing in.';
+      case 'SUPABASE_ACCOUNT_LINK_REQUIRED':
+        return 'This email already belongs to Breezze. Sign in with your existing account to link it.';
+      case 'SUPABASE_AUTH_NOT_CONFIGURED':
+        return 'Supabase sign-in is not configured for Breezze yet.';
+      case 'SUPABASE_AUTH_UNAVAILABLE':
+        return 'Supabase sign-in is temporarily unavailable. Try again.';
+      case 'RATE_LIMITED':
+        return 'Too many attempts. Try again later.';
       case 'NETWORK_ERROR':
         return 'Cannot reach Breezze. Check your connection.';
       case 'SOCIAL_ACCOUNT_LINK_REQUIRED':

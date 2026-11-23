@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../api/breezze_api.dart';
 import 'pending_logout_queue.dart';
+import 'supabase_auth_transport.dart';
 import '../../features/player/player_controller.dart';
 
 /// Auth session state — what the UI renders.
@@ -76,6 +77,17 @@ class AuthSessionController extends Notifier<AuthState> {
       PendingLogoutQueue(SecurePendingLogoutPersistence(_secureStorage));
 
   static const _configuredApiUrl = String.fromEnvironment('BREEZZE_API_URL');
+  static const _authMode = String.fromEnvironment('BREEZZE_AUTH_PROVIDER', defaultValue: 'breezze');
+  static const _supabaseUrl = String.fromEnvironment('BREEZZE_SUPABASE_URL');
+  static const _supabasePublishableKey = String.fromEnvironment('BREEZZE_SUPABASE_PUBLISHABLE_KEY');
+
+  /// Feature-gated until the dedicated Breezze Supabase project and account
+  /// migration have passed acceptance. Legacy users continue signing in.
+  bool get usesSupabaseAuth => _authMode == 'supabase';
+  late final SupabaseAuthTransport _supabase = SupabaseAuthTransport(
+    projectUrl: _supabaseUrl,
+    publishableKey: _supabasePublishableKey,
+  );
   static const _productionApiUrl =
       'https://breezze-api-edge.ykw8vmq7ph.workers.dev';
 
@@ -172,9 +184,22 @@ class AuthSessionController extends Notifier<AuthState> {
   }) async {
     state = const AuthSigningIn();
     try {
-      final response = await _api.register(email, password,
-          displayName: displayName);
-      await _persistSession(response);
+      if (usesSupabaseAuth) {
+        final token = await _supabase.signUp(
+          email, password, displayName: displayName,
+        );
+        if (token == null) {
+          state = const AuthError('EMAIL_VERIFICATION_REQUIRED');
+          return;
+        }
+        await _persistSession(await _api.exchangeSupabaseSession(token));
+      } else {
+        final response = await _api.register(email, password,
+            displayName: displayName);
+        await _persistSession(response);
+      }
+    } on SupabaseAuthTransportException catch (e) {
+      state = AuthError(e.code);
     } on BreezzeApiException catch (e) {
       state = AuthError(e.code);
     } catch (_) {
@@ -185,8 +210,15 @@ class AuthSessionController extends Notifier<AuthState> {
   Future<void> login(String email, String password) async {
     state = const AuthSigningIn();
     try {
-      final response = await _api.login(email, password);
-      await _persistSession(response);
+      if (usesSupabaseAuth) {
+        final token = await _supabase.signIn(email, password);
+        await _persistSession(await _api.exchangeSupabaseSession(token));
+      } else {
+        final response = await _api.login(email, password);
+        await _persistSession(response);
+      }
+    } on SupabaseAuthTransportException catch (e) {
+      state = AuthError(e.code);
     } on BreezzeApiException catch (e) {
       state = AuthError(e.code);
     } catch (_) {

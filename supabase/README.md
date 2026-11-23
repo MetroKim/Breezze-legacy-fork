@@ -41,6 +41,18 @@ Prisma adds a unique `SupabaseAuthIdentity` mapping with a cascade foreign key t
 
 **Do not enable a global Supabase-first login screen or migrate live sessions until a dedicated project is selected, this new mapping migration is applied and all user-flow tests pass.** The Flutter API transport supports token exchange/link, but the existing UI intentionally retains its current sign-in behavior until migration. Supabase's publishable key is not a privileged secret and may be used in clients after configured; never ship `sb_secret_...` in Flutter.
 
+## Flutter sign-in feature gate
+
+The Flutter account controller also supports Supabase Auth email/password when explicitly enabled at build time:
+
+- `BREEZZE_AUTH_PROVIDER=supabase`
+- `BREEZZE_SUPABASE_URL=https://<dedicated-project>.supabase.co`
+- `BREEZZE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...`
+
+The Flutter client calls Supabase Auth directly using **only** the publishable key. A temporary Supabase user access token is exchanged through Breezze's `/auth/supabase/exchange` endpoint for a normal revocable Breezze device session, and the Supabase token is not stored locally. A signup requiring email verification shows a verification message instead of logging in.
+
+**Keep this gate OFF** in production until legacy accounts have been explicitly linked or migrated and Supabase/Auth project configuration, email verification, email delivery, password reset, OAuth, MFA and end-to-end sign-out acceptance are verified. The current production Flutter build retains its proven Breezze login, so users do not lose their libraries.
+
 ## Edge media configuration
 
 - Cloudflare R2 bucket: `breezze-media` (private, no publicly exposed R2.dev endpoint).

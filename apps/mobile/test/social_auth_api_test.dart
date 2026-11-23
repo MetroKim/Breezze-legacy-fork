@@ -85,4 +85,63 @@ void main() {
     expect(AuthResponse.fromJson(
       Map<String, dynamic>.from(result['session'] as Map)).userId, 'user-1');
   });
+  test('embedded Auth0 login uses Breezze themed screen API without browser URL', () async {
+    late http.Request request;
+    final api = BreezzeApi(
+      baseUrl: 'https://breezze.example.test',
+      client: MockClient((sent) async {
+        request = sent;
+        return http.Response(jsonEncode({'data': {
+          'accessToken': 'test-breezze-access',
+          'refreshToken': 'test-breezze-refresh',
+          'user': {'id':'listener-1','email':'listener@example.com'},
+        }}), 200);
+      }),
+    );
+    final result = await api.loginAuth0Embedded('listener@example.com', 'private-password');
+    expect(result.userId, 'listener-1');
+    expect(request.method, 'POST');
+    expect(request.url.path, '/api/v1/auth/auth0/login');
+    expect(request.url.query, isEmpty);
+    expect(jsonDecode(request.body), {
+      'email':'listener@example.com','password':'private-password',
+    });
+    expect(request.headers['Authorization'], isNull);
+  });
+
+  test('embedded registration waits for email verification, no token is returned', () async {
+    late http.Request request;
+    final api = BreezzeApi(
+      baseUrl: 'https://breezze.example.test',
+      client: MockClient((sent) async {
+        request = sent;
+        return http.Response(jsonEncode({'data': {'verificationRequired':true}}), 202);
+      }),
+    );
+    await api.registerAuth0Embedded('listener@example.com', 'long-password',
+      displayName:' Listener ');
+    expect(request.url.path, '/api/v1/auth/auth0/register');
+    expect(jsonDecode(request.body), {
+      'email':'listener@example.com','password':'long-password',
+      'displayName':'Listener',
+    });
+  });
+
+  test('Auth0 password reset and existing-account link are both Breezze endpoints', () async {
+    final requests = <http.Request>[];
+    final api = BreezzeApi(
+      baseUrl: 'https://breezze.example.test',
+      client: MockClient((sent) async {
+        requests.add(sent);
+        return http.Response(jsonEncode({'data': {'sent':true,'linked':true}}), 200);
+      }),
+    );
+    await api.sendAuth0PasswordReset('listener@example.com');
+    api.accessToken = 'existing-breezze-access';
+    await api.linkAuth0Embedded('listener@example.com','password');
+    expect(requests[0].url.path, '/api/v1/auth/auth0/password/reset');
+    expect(requests[1].url.path, '/api/v1/auth/auth0/link');
+    expect(requests[1].headers['authorization'], 'Bearer existing-breezze-access');
+  });
+
 }

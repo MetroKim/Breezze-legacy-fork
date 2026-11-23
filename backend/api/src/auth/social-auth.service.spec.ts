@@ -11,6 +11,9 @@ const config = {
   AUTH0_CLIENT_ID: '',
   AUTH0_CLIENT_SECRET: '',
   AUTH0_REDIRECT_URI: '',
+  AUTH0_NATIVE_CLIENT_ID: '',
+  AUTH0_DB_CONNECTION: '',
+  AUTH0_EMBEDDED_ENABLED: '',
   GOOGLE_OAUTH_CLIENT_ID: 'breezze-google-test-client',
   GOOGLE_OAUTH_CLIENT_SECRET: 'server-only-test-secret',
   GOOGLE_OAUTH_REDIRECT_URI:
@@ -54,7 +57,9 @@ describe('Social OAuth safety and cross-platform pairing', () => {
   afterEach(() => {
     global.fetch = originalFetch;
     for (const key of ['AUTH0_DOMAIN', 'AUTH0_CLIENT_ID',
-      'AUTH0_CLIENT_SECRET', 'AUTH0_REDIRECT_URI']) {
+      'AUTH0_CLIENT_SECRET', 'AUTH0_REDIRECT_URI',
+      'AUTH0_NATIVE_CLIENT_ID', 'AUTH0_DB_CONNECTION',
+      'AUTH0_EMBEDDED_ENABLED']) {
       process.env[key] = '';
     }
   });
@@ -379,5 +384,113 @@ describe('Social OAuth safety and cross-platform pairing', () => {
       .rejects.toBeInstanceOf(ConflictException);
     expect(prisma.user.create).not.toHaveBeenCalled();
   });
+
+  const configureEmbedded = () => {
+    process.env.AUTH0_DOMAIN = 'breezze-test.us.auth0.com';
+    process.env.AUTH0_NATIVE_CLIENT_ID = 'breezze-native-test-client';
+    process.env.AUTH0_DB_CONNECTION = 'Username-Password-Authentication';
+    process.env.AUTH0_EMBEDDED_ENABLED = 'true';
+  };
+
+  it('never sends embedded credentials when the Auth0 feature gate is disabled', async () => {
+    await expect(social.embeddedLogin('listener@example.com', 'example password'))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(prisma.user.create).not.toHaveBeenCalled();
+  });
+
+  it('embedded sign-in exchanges password server-side, validates the Auth0 JWT and keeps the existing Breezze ID', async () => {
+    configureEmbedded();
+    const pair = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const jwk = pair.publicKey.export({ format: 'jwk' }) as any;
+    jwk.kid = 'native-test-kid';
+    const header = Buffer.from(JSON.stringify({ alg: 'RS256', kid: jwk.kid }))
+      .toString('base64url');
+    const payload = Buffer.from(JSON.stringify({
+      iss: 'https://breezze-test.us.auth0.com/',
+      aud: 'breezze-native-test-client',
+      exp: Math.floor(Date.now()/1000)+300,
+      iat: Math.floor(Date.now()/1000),
+      sub: 'auth0|breezze-listener', email: 'listener@example.com',
+      email_verified: true,
+    })).toString('base64url');
+    const unsigned = header + '.' + payload;
+    const idToken = unsigned + '.' + sign(
+      'RSA-SHA256', Buffer.from(unsigned), pair.privateKey,
+    ).toString('base64url');
+    global.fetch = jest.fn().mockImplementation(async (url: string) => {
+      if (url.endsWith('/oauth/token')) {
+        return { ok: true, json: async () => ({ id_token: idToken }) };
+      }
+      if (url.endsWith('/.well-known/jwks.json')) {
+        return { ok: true, json: async () => ({ keys: [jwk] }) };
+      }
+      throw new Error('Unexpected Auth0 destination');
+    });
+    prisma.socialAuthIdentity.findUnique.mockResolvedValue({
+      userId: 'breezze-existing-user-id',
+    });
+    auth.issueVerifiedSocialSession.mockResolvedValue({accessToken:'breezze-access'});
+    await expect(social.embeddedLogin('Listener@Example.com', 'test-pass'))
+      .resolves.toEqual({accessToken:'breezze-access'});
+    expect(auth.issueVerifiedSocialSession)
+      .toHaveBeenCalledWith('breezze-existing-user-id');
+    const [url, settings] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(url).toBe('https://breezze-test.us.auth0.com/oauth/token');
+    const body = JSON.parse(settings.body);
+    expect(body).toMatchObject({
+      client_id:'breezze-native-test-client',
+      realm:'Username-Password-Authentication',
+      username:'listener@example.com',
+      password:'test-pass',
+      grant_type:'http://auth0.com/oauth/grant-type/password-realm',
+    });
+    expect(body.client_secret).toBeUndefined();
+    expect(prisma.user.create).not.toHaveBeenCalled();
+  });
+
+  it('embedded registration sends no Breezze session until the new email is verified', async () => {
+    configureEmbedded();
+    global.fetch = jest.fn().mockResolvedValue({ok: true, status: 200});
+    await expect(social.embeddedRegister('listener@example.com', 'long-test-password', 'Listener'))
+      .resolves.toEqual({verificationRequired:true});
+    const [url, settings] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(url).toBe('https://breezze-test.us.auth0.com/dbconnections/signup');
+    expect(JSON.parse(settings.body)).toMatchObject({
+      connection:'Username-Password-Authentication',
+      email:'listener@example.com',
+      user_metadata:{display_name:'Listener'},
+    });
+    expect(auth.issueVerifiedSocialSession).not.toHaveBeenCalled();
+  });
+
+  it('embedded reset keeps the account-existence response generic', async () => {
+    configureEmbedded();
+    global.fetch = jest.fn().mockResolvedValue({ok:false,status:400,
+      json:async()=>({error:'invalid_request'})});
+    await expect(social.embeddedReset('unknown@example.com'))
+      .resolves.toEqual({sent:true});
+    expect(auth.issueVerifiedSocialSession).not.toHaveBeenCalled();
+  });
+
+  it('embedded account linking requires the existing Breezze owner and matching verified Auth0 identity', async () => {
+    configureEmbedded();
+    global.fetch = jest.fn().mockResolvedValue({
+      ok:true,json:async()=>({id_token:'verified-test-token'}),
+    });
+    jest.spyOn(social as any,'verifyIdentity').mockResolvedValue({
+      subject:'auth0|listener', email:'listener@example.com',name:'Listener',
+    });
+    prisma.user.findUnique.mockResolvedValue({
+      id:'breezze-owner',email:'listener@example.com',
+    });
+    prisma.socialAuthIdentity.findUnique.mockResolvedValue(null);
+    await expect(social.embeddedLink('breezze-owner','listener@example.com','password'))
+      .resolves.toEqual({linked:true});
+    expect(prisma.socialAuthIdentity.create).toHaveBeenCalledWith({
+      data:{userId:'breezze-owner',provider:'auth0',subject:'auth0|listener'},
+    });
+    expect(auth.issueVerifiedSocialSession).not.toHaveBeenCalled();
+  });
+
 
 });

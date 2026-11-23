@@ -160,30 +160,30 @@ void main() {
     controller.attachEngine(native);
 
     await controller.playTrack(
-      trackId: 'local-a',
+      trackId: 'device:local-a',
       queue: const [
-        TrackInfo(id: 'local-a', title: 'A', localFilePath: '/tmp/a.m4a'),
-        TrackInfo(id: 'local-b', title: 'B', localFilePath: '/tmp/b.m4a'),
+        TrackInfo(id: 'device:local-a', title: 'A', localFilePath: '/tmp/a.m4a'),
+        TrackInfo(id: 'device:local-b', title: 'B', localFilePath: '/tmp/b.m4a'),
       ],
     );
 
     expect(native.playlist.map((s) => s.trackId).toList(),
-        ['local-a', 'local-b']);
+        ['device:local-a', 'device:local-b']);
     expect(native.prepared, isEmpty);
     expect(native.playCount, 1);
     native.indices.add(1);
     await Future<void>.delayed(Duration.zero);
-    expect(active.read(playerControllerProvider).currentTrack?.id, 'local-b');
-    expect(controller.queue.current?.trackId, 'local-b');
+    expect(active.read(playerControllerProvider).currentTrack?.id, 'device:local-b');
+    expect(controller.queue.current?.trackId, 'device:local-b');
     expect(active.read(playerControllerProvider).playbackState,
         PlaybackState.playing);
 
     await controller.previous();
     expect(native.seekIndices, [0]);
-    expect(active.read(playerControllerProvider).currentTrack?.id, 'local-a');
+    expect(active.read(playerControllerProvider).currentTrack?.id, 'device:local-a');
     await controller.next();
     expect(native.seekIndices, [0, 1]);
-    expect(active.read(playerControllerProvider).currentTrack?.id, 'local-b');
+    expect(active.read(playerControllerProvider).currentTrack?.id, 'device:local-b');
 
     await controller.stop();
     active.dispose();
@@ -199,19 +199,19 @@ void main() {
     final controller = active.read(playerControllerProvider.notifier);
     controller.attachEngine(native);
     await controller.playTrack(
-      trackId: 'local-a',
+      trackId: 'device:local-a',
       queue: const [
-        TrackInfo(id: 'local-a', localFilePath: '/tmp/a.m4a'),
-        TrackInfo(id: 'local-b', localFilePath: '/tmp/b.m4a'),
+        TrackInfo(id: 'device:local-a', localFilePath: '/tmp/a.m4a'),
+        TrackInfo(id: 'device:local-b', localFilePath: '/tmp/b.m4a'),
       ],
     );
     controller.playLast(const TrackInfo(
-      id: 'local-c', localFilePath: '/tmp/c.m4a',
+      id: 'device:local-c', localFilePath: '/tmp/c.m4a',
     ));
     await Future<void>.delayed(Duration.zero);
-    expect(native.prepared, ['local-a']);
+    expect(native.prepared, ['device:local-a']);
     expect(controller.queue.upNext.map((e) => e.trackId),
-        ['local-b', 'local-c']);
+        ['device:local-b', 'device:local-c']);
     active.dispose();
     await native.dispose();
   });

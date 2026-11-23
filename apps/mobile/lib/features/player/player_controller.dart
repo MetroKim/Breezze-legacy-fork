@@ -370,6 +370,119 @@ class PlayerController extends Notifier<PlayerState> {
   }
 
 
+  void _disarmNativeGapless() {
+    _gaplessEngine = null;
+    _gaplessEntries = null;
+    _gaplessIndex = null;
+  }
+
+  void _syncNativeGaplessIndex(int index) {
+    final entries = _gaplessEntries;
+    if (entries == null || index < 0 || index >= entries.length ||
+        _gaplessIndex == index) {
+      return;
+    }
+    _gaplessIndex = index;
+    final entry = entries[index];
+    final previousId = state.currentTrack?.id;
+    if (previousId != null) _scrobbles.onStop(previousId);
+    if (!_queue.selectEntry(entry.entryId)) return;
+    final next = _trackInfoFor(entry.trackId) ?? TrackInfo(id: entry.trackId);
+    state = state.copyWith(
+      currentTrack: next,
+      position: Duration.zero,
+      duration: next.duration,
+    );
+    if (state.playbackState == PlaybackState.playing) {
+      _scrobbles.onPlay(entry.trackId, DateTime.now().toUtc());
+    }
+  }
+
+  /// Editing a playing native playlist needs a fresh single-item source.
+  /// Never let a stale decoder queue disagree with the global queue.
+  void _invalidateNativeGapless() {
+    if (_gaplessEngine == null) return;
+    final track = state.currentTrack;
+    final position = state.position;
+    _disarmNativeGapless();
+    if (track != null) {
+      unawaited(_resolveAndPlay(track, initialPosition: position));
+    }
+  }
+
+  Future<void> _resolveAndPlayLocalPlaylist(
+    List<TrackInfo> tracks,
+    List<QueueEntry> entries,
+    int index,
+    GaplessLocalQueueEngine native,
+  ) async {
+    final requestId = ++_requestGeneration;
+    _disarmNativeGapless();
+    final selected = tracks[index];
+    final oldId = state.currentTrack?.id;
+    if (oldId != null) _scrobbles.onStop(oldId);
+    unawaited(_closePlaybackSession());
+    _autoAdvancedTrackId = null;
+    final source = PlayableSource(
+      trackId: selected.id,
+      streamUrl: selected.localFilePath!,
+      expiresAtUtc: DateTime.utc(9999),
+      isLocal: true,
+    );
+    _activeSource = source;
+    state = state.copyWith(
+      currentTrack: selected,
+      position: Duration.zero,
+      duration: selected.duration,
+    );
+    _machine.dispatch(StartRequested(selected.id, requestId: requestId));
+    _machine.dispatch(SourceResolved(
+      selected.id, source.streamUrl, requestId: requestId,
+    ));
+    if (_machine.state != PlaybackState.loading) return;
+    _gaplessEngine = native;
+    _gaplessEntries = List.of(entries);
+    _gaplessIndex = index;
+
+    try {
+      await _serializeEngineOperation(() async {
+        if (!_isCurrentRequest(requestId) || !identical(_engine, native)) return;
+        await native.prepareLocalPlaylist([
+          for (final track in tracks)
+            PlayableSource(
+              trackId: track.id,
+              streamUrl: track.localFilePath!,
+              expiresAtUtc: DateTime.utc(9999),
+              isLocal: true,
+            ),
+        ], initialIndex: index);
+        if (!_isCurrentRequest(requestId) || !identical(_engine, native)) return;
+        _machine.dispatch(MediaReady(requestId: requestId));
+        if (_machine.state != PlaybackState.buffering) return;
+        _machine.dispatch(PlayPressed());
+        if (_machine.state != PlaybackState.playing) return;
+        unawaited(native.play().catchError((Object error, StackTrace stack) {
+          if (!_isCurrentRequest(requestId)) return;
+          _disarmNativeGapless();
+          _machine.dispatch(SourceResolutionFailed(
+            'LOCAL_GAPLESS_PLAYBACK_FAILED', requestId: requestId,
+          ));
+        }));
+      });
+      if (_isCurrentRequest(requestId) &&
+          _machine.state == PlaybackState.playing) {
+        _scrobbles.onPlay(selected.id, DateTime.now().toUtc());
+      }
+    } catch (_) {
+      if (_isCurrentRequest(requestId)) {
+        _disarmNativeGapless();
+        _machine.dispatch(SourceResolutionFailed(
+          'LOCAL_GAPLESS_SETUP_FAILED', requestId: requestId,
+        ));
+      }
+    }
+  }
+
   // ----------------------------------------------------------------
   // Commands
   // ----------------------------------------------------------------

@@ -168,7 +168,8 @@ jobs:
 
   flutter_macos:
     name: Flutter macOS and iOS builds
-    runs-on: macos-latest
+    # Use the SDK required by AVFoundation's current video player plugin.
+    runs-on: macos-26-intel
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -138,10 +138,39 @@ class BzThemeColors extends ThemeExtension<BzThemeColors> {
   }
 }
 
+/// Applies an icon-derived brand seed without sacrificing contrast or
+/// the intentionally monochrome Breezze identity.
+/// A black/white icon stays monochrome; colorful variants can adapt.
+BzThemeColors bzColorsFromBrandSeed({
+  required Brightness brightness,
+  Color? seedColor,
+}) {
+  final base = brightness == Brightness.dark
+      ? BzThemeColors.dark : BzThemeColors.light;
+  if (seedColor == null) return base;
+  final hsv = HSVColor.fromColor(seedColor);
+  if (hsv.saturation < 0.16 || hsv.value < 0.10) return base;
+
+  final generated = ColorScheme.fromSeed(
+    seedColor: seedColor,
+    brightness: brightness,
+  );
+  final accent = generated.primary;
+  final l1 = accent.computeLuminance();
+  final l2 = base.background.computeLuminance();
+  final contrast = (l1 > l2 ? l1 + 0.05 : l2 + 0.05) /
+      (l1 > l2 ? l2 + 0.05 : l1 + 0.05);
+  // Interactive text/icons need WCAG AA-level contrast.
+  if (contrast < 4.5) return base;
+  return base.copyWith(accent: accent);
+}
+
 /// The light theme, §21.2.
-ThemeData bzLightTheme() {
+ThemeData bzLightTheme({Color? brandSeed}) {
   final base = ThemeData.light(useMaterial3: true);
-  final c = BzThemeColors.light;
+  final c = bzColorsFromBrandSeed(
+    brightness: Brightness.light, seedColor: brandSeed,
+  );
   return base.copyWith(
     extensions: [c],
     scaffoldBackgroundColor: c.background,
@@ -163,9 +192,11 @@ ThemeData bzLightTheme() {
 }
 
 /// The dark theme, §21.2.
-ThemeData bzDarkTheme() {
+ThemeData bzDarkTheme({Color? brandSeed}) {
   final base = ThemeData.dark(useMaterial3: true);
-  final c = BzThemeColors.dark;
+  final c = bzColorsFromBrandSeed(
+    brightness: Brightness.dark, seedColor: brandSeed,
+  );
   return base.copyWith(
     extensions: [c],
     scaffoldBackgroundColor: c.background,

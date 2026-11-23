@@ -82,7 +82,7 @@ async function playback(request: Request, url: URL, env: Env): Promise<Response>
   }
 
   const key = `audio/${trackId}/${variant}`;
-  const rangeHeader = request.headers.get('range');
+  let rangeHeader = request.headers.get('range');
   let object: R2ObjectBody | R2Object | null;
   let status = 200;
   let rangeStart: number | null = null;
@@ -95,6 +95,14 @@ async function playback(request: Request, url: URL, env: Env): Promise<Response>
     const end = match[2] ? Number(match[2]) : null;
     const head = await env.MEDIA_BUCKET.head(key);
     if (!head) return error(404, 'MEDIA_NOT_FOUND');
+    // HTTP If-Range: a replaced R2 object must never be appended to a
+    // different encoded master. A mismatch forces a new full 200 response.
+    const ifRange = request.headers.get('if-range');
+    if (ifRange != null && ifRange !== head.httpEtag) {
+      rangeHeader = null;
+      object = request.method === 'HEAD'
+        ? head : await env.MEDIA_BUCKET.get(key);
+    } else {
     if (
       (start === null && (end === null || end <= 0)) ||
       (start !== null && (!Number.isSafeInteger(start) || start < 0)) ||
@@ -128,6 +136,7 @@ async function playback(request: Request, url: URL, env: Env): Promise<Response>
     totalSize = head.size;
     object = await env.MEDIA_BUCKET.get(key, { range: { offset, length } });
     status = 206;
+    }
   } else {
     object = request.method === 'HEAD'
       ? await env.MEDIA_BUCKET.head(key)

@@ -76,9 +76,11 @@ describe('PlaybackSessionService', () => {
     expect(result.playback).toEqual({ streamUrl: 'https://cdn.example/audio' });
   });
 
-  it('plays a YouTube discovery result through its exact catalogue recording', async () => {
-    const externalTrackId = 'bz:youtube_music:abcdefghijk';
-    prisma.track.findUnique.mockResolvedValue({ id: 'master-id', source: 'youtube_music' });
+  it.each([
+    ['youtube_music', 'bz:youtube_music:abcdefghijk'],
+    ['deezer', 'bz:deezer:3135556'],
+  ])('resolves the exact authorized master for %s', async (source, externalTrackId) => {
+    prisma.track.findUnique.mockResolvedValue({ id: 'master-id', source });
     resolver.resolve.mockResolvedValue({ streamUrl: 'https://cdn.example/master.m4a' });
     const session = await service.start('user-1', 'TZ', { externalTrackId, requestedQuality: 'AAC_256' });
     expect(prisma.track.findUnique).toHaveBeenCalledWith({

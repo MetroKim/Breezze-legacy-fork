@@ -37,6 +37,17 @@ void main() {
       expect(q.advance()!.entryId, 'preview');
     });
 
+    test('native playlist changes select a stable entry without reorder', () {
+      final q = QueueManager();
+      q.replaceWith([entry('a'), entry('b'), entry('c')]);
+      expect(q.selectEntry('b'), isTrue);
+      expect(q.current!.entryId, 'b');
+      expect(q.upNext.map((e) => e.entryId), ['c']);
+      expect(q.history.last.entryId, 'a');
+      expect(q.selectEntry('not-present'), isFalse);
+      expect(q.current!.entryId, 'b');
+    });
+
     test('playLast appends at end', () {
       final q = QueueManager();
       q.replaceWith([entry('a'), entry('b')]);

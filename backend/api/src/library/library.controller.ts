@@ -26,6 +26,14 @@ class ArtistKeyParams {
   artistKey!: string;
 }
 
+export class FollowArtistDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(160)
+  artistName?: string;
+}
+
 export class SavedCatalogAlbumDto {
   @IsString()
   @Matches(/^[0-9]{1,20}$/)
@@ -68,14 +76,23 @@ export class SavedCatalogAlbumDto {
 export class LibraryController {
   constructor(private readonly library: LibraryService) {}
 
+  @Get('artists')
+  followedArtists(@CurrentUser() userId: string) {
+    return this.library.listFollowedArtists(userId);
+  }
+
   @Get('artists/:artistKey')
   artistStatus(@CurrentUser() userId: string, @Param() params: ArtistKeyParams) {
     return this.library.artistStatus(userId, params.artistKey);
   }
 
   @Post('artists/:artistKey')
-  followArtist(@CurrentUser() userId: string, @Param() params: ArtistKeyParams) {
-    return this.library.setFollowing(userId, params.artistKey, true);
+  followArtist(
+    @CurrentUser() userId: string,
+    @Param() params: ArtistKeyParams,
+    @Body() dto: FollowArtistDto,
+  ) {
+    return this.library.setFollowing(userId, params.artistKey, true, dto.artistName);
   }
 
   @Delete('artists/:artistKey')

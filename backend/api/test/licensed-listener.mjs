@@ -1,4 +1,4 @@
-// Run only against the disposable Postgres and synthetic Supabase Storage on the CI runner.
+// Run only against the disposable Postgres and media worker on the CI runner.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -36,14 +36,14 @@ try {
   const head = await fetch(session.playback.streamUrl, {method: 'HEAD'});
   assert.equal(head.status, 200);
   const etag = head.headers.get('etag');
-  assert.ok(/^"[A-Za-z0-9._:-]{1,120}"$/.test(etag || ''), 'Supabase Storage must expose a strong object version');
+  assert.ok(/^"[A-Za-z0-9._:-]{1,120}"$/.test(etag || ''), 'R2 must expose a strong version');
   const matchingRange = await fetch(session.playback.streamUrl, {
     headers: { Range: 'bytes=128-255', 'If-Range': etag },
   });
   assert.equal(matchingRange.status, 206);
   assert.deepEqual(Buffer.from(await matchingRange.arrayBuffer()), audio.subarray(128,256));
   const changedMaster = await fetch(session.playback.streamUrl, {
-    headers: { Range: 'bytes=128-255', 'If-Range': '"obsolete-supabase-object"' },
+    headers: { Range: 'bytes=128-255', 'If-Range': '"obsolete-r2-object"' },
   });
   assert.equal(changedMaster.status, 200, 'mismatched If-Range must force a full replacement');
   assert.deepEqual(Buffer.from(await changedMaster.arrayBuffer()), audio);

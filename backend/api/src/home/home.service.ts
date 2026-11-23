@@ -3,7 +3,7 @@ import { PrismaService } from '../prisma.service';
 import { RecommendationsService } from '../recommendations/recommendations.service';
 
 export interface HomeSection {
-  sectionType: 'personalized' | 'recently_played' | 'favorites';
+  sectionType: 'personalized' | 'followed_artists' | 'recently_played' | 'favorites';
   title: string;
   layout: 'rail' | 'grid';
   trackIds: string[];
@@ -33,13 +33,29 @@ export class HomeService {
       this.recommendations.forUser(userId, territory),
     ]);
 
+    // Artist follows are intentional taste signals: give them a dedicated
+    // shelf and do not duplicate those tracks in Made for You.
+    const followedTracks = recommendations.filter(
+      (item) => item.reason === 'Because you follow this artist',
+    );
+    const otherRecommendations = recommendations.filter(
+      (item) => item.reason !== 'Because you follow this artist',
+    );
     const sections: HomeSection[] = [];
-    if (recommendations.length > 0) {
+    if (followedTracks.length > 0) {
+      sections.push({
+        sectionType: 'followed_artists',
+        title: 'From Artists You Follow',
+        layout: 'rail',
+        trackIds: followedTracks.map((item) => item.trackId),
+      });
+    }
+    if (otherRecommendations.length > 0) {
       sections.push({
         sectionType: 'personalized',
         title: 'Made for You',
         layout: 'rail',
-        trackIds: recommendations.map((item) => item.trackId),
+        trackIds: otherRecommendations.map((item) => item.trackId),
       });
     }
     if (recent.length > 0) {

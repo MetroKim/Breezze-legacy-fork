@@ -14,7 +14,6 @@ import '../../core/audio/background_audio.dart';
 import '../../core/database/migrate_to_drift.dart';
 import '../../core/database/outbox_sync_service.dart';
 import '../../features/player/player_controller.dart';
-import '../../features/authentication/auth_screen.dart';
 import '../../features/onboarding/onboarding_flow.dart';
 import 'bz_shell.dart';
 
@@ -181,7 +180,7 @@ class _BreezzeAppRootState extends ConsumerState<BreezzeAppRoot> with WidgetsBin
             return shell;
           }
 
-          return const AuthScreen();
+          // Guest-first: browsing and local library never require an account.\n          // The branded Supabase sign-in route is reached from Settings.\n          return const BreezzeShell();
         },
       ),
     );

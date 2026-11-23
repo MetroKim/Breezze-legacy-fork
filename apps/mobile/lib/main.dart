@@ -16,7 +16,7 @@ void main() async {
   await Supabase.initialize(
     url: const String.fromEnvironment('SUPABASE_URL',
       defaultValue: 'https://djwvyjtebmsavhcrmhxf.supabase.co'),
-    anonKey: const String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY',
+    publishableKey: const String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY',
       defaultValue: 'sb_publishable_ZloCmmQPo86OqHbH3Yqgsw_xZGPqSi3'),
   );
   // Register the just_audio Linux/Windows implementations before the

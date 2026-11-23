@@ -82,6 +82,9 @@ abstract interface class AudioEngineAdapter {
 /// AudioEngineAdapter: licensed remote streams still require per-track
 /// playback sessions, and cannot be speculatively stitched into a playlist.
 abstract interface class GaplessLocalQueueEngine {
+  /// True only when the platform provides a verified native playlist.
+  bool get supportsGaplessLocalFiles;
+
   /// All sources must be app-private/user-controlled local audio files.
   Future<void> prepareLocalPlaylist(
     List<PlayableSource> sources, {

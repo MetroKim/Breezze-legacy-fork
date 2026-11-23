@@ -653,22 +653,68 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     ? _buildRecentSearches(theme)
                     : _error != null
                         ? Center(
-                            child: Padding(
+                            child: SingleChildScrollView(
                               padding: const EdgeInsets.all(24),
-                              child: Text(
-                                _error!,
-                                textAlign: TextAlign.center,
-                                style: theme.textTheme.bodyMedium,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  BzBnoteMark(size: 48, color: theme.bzText2),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    'Search unavailable',
+                                    style: theme.textTheme.titleLarge,
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    _error!,
+                                    style: theme.textTheme.bodyMedium
+                                        ?.copyWith(color: theme.bzText2),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  const SizedBox(height: 20),
+                                  OutlinedButton(
+                                    onPressed: () => _search(
+                                      _controller.text,
+                                      recordHistory: false,
+                                    ),
+                                    child: const Text('Try again'),
+                                  ),
+                                ],
                               ),
                             ),
                           )
                         : _results.isEmpty
                             ? Center(
-                                child: Text(
-                                  (_searchVideos && !_searchLibrary
-                                      ? 'No official videos found for "${_controller.text.trim()}"'
-                                      : 'No results for "${_controller.text.trim()}"'),
-                                  style: theme.textTheme.titleMedium,
+                                child: SingleChildScrollView(
+                                  padding: const EdgeInsets.all(24),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        (_searchVideos && !_searchLibrary
+                                            ? 'No official videos found for "${_controller.text.trim()}"'
+                                            : 'No results for "${_controller.text.trim()}"'),
+                                        style: theme.textTheme.titleMedium,
+                                        textAlign: TextAlign.center,
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Try a different artist, song or keyword.',
+                                        style: theme.textTheme.bodyMedium
+                                            ?.copyWith(color: theme.bzText2),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                      const SizedBox(height: 16),
+                                      TextButton(
+                                        onPressed: () {
+                                          _controller.clear();
+                                          _onQueryChanged('');
+                                        },
+                                        child: const Text('Clear search'),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               )
                             : ListView.builder(

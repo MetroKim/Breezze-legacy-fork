@@ -1,5 +1,10 @@
 # Breezze Current Implementation Gap Register
 
+> **Release status has moved to** [RELEASE_EXECUTION_STATUS.md](RELEASE_EXECUTION_STATUS.md).
+> The historical CI snapshots and five-tab/radio references below describe
+> earlier baselines, not the current audio-first four-tab release.
+> Use the new register for acceptance decisions.
+
 **Last reconciled:** 2026-11-22  
 **Main baseline:** `bd031a24616d7257e2b04ef76b469332d4a49658` (PR #45 merged 2026-11-22)  
 **PR #44 CI:** [45017890994 — all 7 jobs passed](https://github.com/MetroKim/MetroMusic/actions/runs/45017890994)  

@@ -15,6 +15,7 @@ import '../../core/database/migrate_to_drift.dart';
 import '../../core/database/outbox_sync_service.dart';
 import '../../features/player/player_controller.dart';
 import '../../features/onboarding/onboarding_flow.dart';
+import '../../features/authentication/auth_screen.dart';
 import 'bz_shell.dart';
 
 /// Auth gate: auth screen until signed in, then the shell. On
@@ -180,7 +181,7 @@ class _BreezzeAppRootState extends ConsumerState<BreezzeAppRoot> with WidgetsBin
             return shell;
           }
 
-          // Guest-first: browsing and local library never require an account.\n          // The branded Supabase sign-in route is reached from Settings.\n          return const BreezzeShell();
+          // Authentication required before any navigation or playback screen.\n          return const AuthScreen();
         },
       ),
     );

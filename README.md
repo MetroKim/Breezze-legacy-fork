@@ -80,6 +80,7 @@ The Flutter codebase targets Android, iOS, Web, Linux, macOS and Windows. Build 
 - [Product experience](docs/PRODUCT_EXPERIENCE.md)
 - [Interface contract](docs/design/BREEZZE_INTERFACE_CONTRACT.md)
 - [Integrated design and engineering architecture](docs/architecture/BREEZZE_INTEGRATED_DESIGN_ENGINEERING_ARCHITECTURE.md)
+- [Audio-first execution and acceptance](docs/architecture/BREEZZE_AUDIO_FIRST_EXECUTION_AND_ACCEPTANCE.md)
 - [Multi-source provider architecture](docs/architecture/BREEZZE_MULTISOURCE_PROVIDER_ARCHITECTURE.md)
 - [Provider integration decision](docs/architecture/BREEZZE_PROVIDER_INTEGRATION_DECISION.md)
 - [Discovery provider setup](docs/architecture/DISCOVERY_PROVIDER_SETUP.md)
@@ -90,12 +91,13 @@ The Flutter codebase targets Android, iOS, Web, Linux, macOS and Windows. Build 
 - [Engineering backlog](docs/ROADMAP_AND_BUG_BACKLOG.md)
 - [Third-party code and provider policy](docs/legal/BREEZZE_THIRD_PARTY_CODE_POLICY.md)
 
-## Current verification
+## Current verification and canonical development
 
-The current main baseline includes the merged provider, playback and backend-hardening work through commit `bbb61f565812ad3a6a7458c1e1bef02dff5b2406`. Its post-merge quality workflow [45008430816](https://github.com/MetroKim/MetroMusic/actions/runs/45008430816) passed all 7 jobs. The in-app experience contract is proposed in [PR #33](https://github.com/MetroKim/MetroMusic/pull/33); remaining product implementation and acceptance evidence are tracked in [Issue #27](https://github.com/MetroKim/MetroMusic/issues/27).
+The **only active application target** is [MetroKim/Breezze](https://github.com/MetroKim/Breezze). [MetroKim/MetroMusic](https://github.com/MetroKim/MetroMusic) remains a legacy history/reference repository with a README redirect; do not push new product changes there. Breezze already contains the shared MetroMusic application history.
 
-Breezze's one-million-active-listener goal is an engineering target, not a measured capacity claim. Production deployment, provider rights approval, load testing and physical-device certification remain release gates.
+The latest verified **draft** change set is [Breezze PR #3](https://github.com/MetroKim/Breezze/pull/3), commit `391dcd296fe995c3f3499337947747485294b317`. Its [CI](https://github.com/MetroKim/Breezze/actions/runs/45144191636), [Android/iOS listener-runtime tests](https://github.com/MetroKim/Breezze/actions/runs/45144191610), and [CodeQL checks](https://github.com/MetroKim/Breezze/actions/runs/45144191623) passed on that exact commit. This evidence does not automatically apply to new commits, production deployments, or real-device Bluetooth/lock-screen tests.
 
+The ten-phase [audio-first acceptance contract](docs/architecture/BREEZZE_AUDIO_FIRST_EXECUTION_AND_ACCEPTANCE.md) defines the remaining implementation and release gates. Do not mark full-track catalog licensing, native DSP, true gapless playback, physical-device certification or production deployment complete based on mock fixtures or preview streams.
 
 ### Production connectivity and deployment
 

@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/auth/auth_session.dart';
+import '../../core/api/breezze_api.dart';
 import '../../widgets/bz_brand_icons.dart';
 
 /// Auth screen — login + register in one premium glass card, wired to
@@ -441,6 +442,22 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
         ),
       ],
     );
+  }
+
+  Future<void> _runMfa(Future<void> Function() action) async {
+    setState(() {
+      _mfaBusy = true;
+      _mfaError = null;
+    });
+    try {
+      await action();
+    } on BreezzeApiException catch (error) {
+      if (mounted) setState(() => _mfaError = error.code);
+    } catch (_) {
+      if (mounted) setState(() => _mfaError = 'NETWORK_ERROR');
+    } finally {
+      if (mounted) setState(() => _mfaBusy = false);
+    }
   }
 
   Widget _buildMfaRequired(BuildContext context, AuthMfaRequired auth) {

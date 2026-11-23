@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:breezze_design_system/breezze_design_system.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as supa;
 
 import '../../core/auth/auth_session.dart';
 import '../../widgets/bz_brand_icons.dart';
@@ -39,28 +40,38 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
     super.dispose();
   }
 
+
+  /// Supabase profiles are the source of truth for account details.
+  /// The legacy API may still own catalog/playlists during migration.
   Future<void> _load() async {
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final api = ref.read(authSessionProvider.notifier).api;
-      final profile = await api.profile();
-      if (!mounted) return;
-      final preference = profile['preference'] is Map
-          ? Map<String, dynamic>.from(profile['preference'] as Map)
-          : <String, dynamic>{};
+      final client = supa.Supabase.instance.client;
+      final user = client.auth.currentUser;
+      if (user == null) {
+        throw StateError('A signed-in account is required');
+      }
+      final profile = await client
+          .from('profiles')
+          .select('display_name, country, language, genres, favorite_artists')
+          .eq('id', user.id)
+          .maybeSingle();
+      if (!mounted || client.auth.currentUser?.id != user.id) return;
+      final data = profile ?? <String, dynamic>{};
       setState(() {
-        _name.text = profile['displayName'] as String? ?? '';
-        _country.text = preference['country'] as String? ?? '';
-        _language.text = preference['language'] as String? ?? '';
-        _genres.text = (preference['genres'] as List<dynamic>? ?? const [])
+        _name.text = data['display_name'] as String? ??
+            user.userMetadata?['full_name'] as String? ?? '';
+        _country.text = data['country'] as String? ?? '';
+        _language.text = data['language'] as String? ?? '';
+        _genres.text = (data['genres'] as List<dynamic>? ?? const [])
             .whereType<String>().join(', ');
         _favoriteArtists.text =
-            (preference['favoriteArtists'] as List<dynamic>? ?? const [])
+            (data['favorite_artists'] as List<dynamic>? ?? const [])
                 .whereType<String>().join(', ');
-        _email = profile['email'] as String?;
+        _email = user.email;
         _loading = false;
       });
     } catch (_) {
@@ -86,6 +97,10 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
       setState(() => _error = 'Country must be a two-letter ISO code, such as TZ.');
       return;
     }
+    if (language.length > 16) {
+      setState(() => _error = 'Language must be 16 characters or fewer.');
+      return;
+    }
     List<String> genres;
     List<String> artists;
     try {
@@ -97,14 +112,19 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
     }
     setState(() { _saving = true; _error = null; });
     try {
-      await ref.read(authSessionProvider.notifier).api.updateProfile(
-            displayName: name,
-            includePreferences: true,
-            country: country.isEmpty ? null : country,
-            language: language.isEmpty ? null : language,
-            genres: genres,
-            favoriteArtists: artists,
-          );
+      final client = supa.Supabase.instance.client;
+      final user = client.auth.currentUser;
+      if (user == null) throw StateError('Signed out');
+      await client.from('profiles').upsert({
+        'id': user.id,
+        'display_name': name,
+        'country': country.isEmpty ? null : country,
+        'language': language.isEmpty ? null : language,
+        'genres': genres,
+        'favorite_artists': artists,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }, onConflict: 'id');
+      if (!mounted || client.auth.currentUser?.id != user.id) return;
       await _load();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -194,7 +214,7 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                         style: theme.textTheme.labelLarge,
                       ),
                       Text(
-                        'Photo editing will be available when profile media support is connected.',
+                        'Photo editing is not available until secure avatar storage is enabled.',
                         textAlign: TextAlign.center,
                         style: theme.textTheme.bodySmall?.copyWith(color: theme.bzText2),
                       ),

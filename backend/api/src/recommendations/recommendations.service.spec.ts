@@ -10,6 +10,7 @@ describe('RecommendationsService', () => {
     track: { findMany: jest.fn() },
     artist: { findMany: jest.fn() },
     userPreference: { findUnique: jest.fn() },
+    userFollowedArtist: { findMany: jest.fn() },
   };
   const rights = { filterFullStream: jest.fn() };
   let service: RecommendationsService;
@@ -19,6 +20,7 @@ describe('RecommendationsService', () => {
     prisma.recentlyPlayed.findMany.mockResolvedValue([]);
     prisma.favorite.findMany.mockResolvedValue([]);
     prisma.artist.findMany.mockResolvedValue([]);
+    prisma.userFollowedArtist.findMany.mockResolvedValue([]);
     prisma.userPreference.findUnique.mockResolvedValue({ favoriteArtists: [] });
     prisma.listeningEvent.groupBy.mockResolvedValue([
       { trackId: 'listened-a', _count: { trackId: 5 } },
@@ -200,5 +202,46 @@ describe('RecommendationsService', () => {
       { trackId: 'popular-1', reason: 'Popular on Breezze' },
     ]);
     expect(rights.filterFullStream).toHaveBeenLastCalledWith(['popular-1', 'blocked-1'], 'TZ');
+  });
+
+  it('prioritizes an explicitly followed Apple artist when its canonical catalog match exists', async () => {
+    prisma.userFollowedArtist.findMany.mockResolvedValue([
+      { artistKey: 'apple:198', artistName: 'Artist X' },
+    ]);
+    prisma.listeningEvent.groupBy.mockResolvedValueOnce([]);
+    prisma.artist.findMany.mockResolvedValue([
+      { id: 'artist-x', name: 'Artist X' },
+    ]);
+    prisma.track.findMany.mockImplementation(({ where }: any) => {
+      if (where.artistId === 'artist-x') {
+        return Promise.resolve([
+          { id: 'new-from-followed', artistId: 'artist-x' },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+
+    const items = await service.forUser('follower', 'TZ');
+    expect(items).toEqual([
+      { trackId: 'new-from-followed', reason: 'Because you follow this artist' },
+    ]);
+    expect(prisma.userFollowedArtist.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 'follower' } }),
+    );
+    expect(rights.filterFullStream).toHaveBeenCalledWith(
+      ['new-from-followed'], 'TZ',
+    );
+  });
+
+  it('uses canonical artist follows even when no name was stored', async () => {
+    prisma.userFollowedArtist.findMany.mockResolvedValue([
+      { artistKey: 'catalog:artist-a', artistName: null },
+    ]);
+    prisma.listeningEvent.groupBy.mockResolvedValueOnce([]);
+    const items = await service.forUser('follower', 'TZ');
+    expect(items[0]).toEqual({
+      trackId: 'a-1',
+      reason: 'Because you follow this artist',
+    });
   });
 });

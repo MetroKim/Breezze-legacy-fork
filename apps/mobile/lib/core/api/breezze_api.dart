@@ -197,10 +197,17 @@ class BreezzeApi {
     return data['following'] as bool;
   }
 
-  Future<void> followArtist(String key, bool following) async {
+  Future<List<Map<String, dynamic>>> followedArtists() async {
+    final data = await _get('/library/artists');
+    return _asMapList(data);
+  }
+
+  Future<void> followArtist(String key, bool following, {String? name}) async {
     final path = '/library/artists/${Uri.encodeComponent(key)}';
     if (following) {
-      await _post(path, {});
+      await _post(path, {
+        if (name != null && name.trim().isNotEmpty) 'artistName': name.trim(),
+      });
     } else {
       await _delete(path);
     }

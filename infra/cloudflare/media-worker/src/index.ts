@@ -8,6 +8,8 @@ export interface Env {
   SUPABASE_URL: string;
   SUPABASE_SECRET_KEY: string;
   SUPABASE_MEDIA_BUCKET?: string;
+  // Only for isolated CI with a synthetic key and loopback storage server.
+  SUPABASE_TEST_ALLOW_LOCAL_HTTP?: string;
 }
 
 const encoder = new TextEncoder();
@@ -68,7 +70,11 @@ function error(status: number, code: string): Response {
 function storageOrigin(env: Env): URL | null {
   try {
     const value = new URL(env.SUPABASE_URL);
-    if (value.protocol !== 'https:' || !value.hostname ||
+    const isolatedCI =
+      env.SUPABASE_TEST_ALLOW_LOCAL_HTTP === 'true' &&
+      env.SUPABASE_SECRET_KEY.startsWith('test-only-') &&
+      value.protocol === 'http:' && value.hostname === '127.0.0.1';
+    if ((value.protocol !== 'https:' && !isolatedCI) || !value.hostname ||
         value.username || value.password || value.search || value.hash ||
         value.pathname !== '/') return null;
     return value;

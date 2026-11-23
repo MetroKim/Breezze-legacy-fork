@@ -59,6 +59,25 @@ class DownloadsLibrary {
       // download-rights decision. Never extract media directly from a
       // metadata/search provider in the client.
       final audioFile = File('${dir.path}/audio.m4a');
+      if (await audioFile.exists()) {
+        // A completed cache is no more trustworthy than a partial one.
+        // An updated master, codec or revoked asset invalidates old bytes.
+        final metaFile = File('${dir.path}/meta.json');
+        String? cachedVersion;
+        try {
+          if (await metaFile.exists()) {
+            final data = jsonDecode(await metaFile.readAsString());
+            if (data is Map) cachedVersion = data['assetVersion'] as String?;
+          }
+        } catch (_) {
+          // Corrupt metadata is never proof of a matching audio master.
+        }
+        if (assetVersion == null ||
+            !RegExp(r'^[A-Za-z0-9._:-]{1,128}$').hasMatch(assetVersion) ||
+            cachedVersion != assetVersion) {
+          await audioFile.delete();
+        }
+      }
       if (!await audioFile.exists()) {
         final partialFile = File('${dir.path}/audio.part');
         final versionFile = File(partialFile.path + '.version');
@@ -182,6 +201,7 @@ class DownloadsLibrary {
         'artist': track.artist,
         'ownerId': ownerId,
         'catalogTrackId': catalogTrackId,
+        'assetVersion': assetVersion,
         'rightsExpiresAtUtc': rightsExpiresAtUtc?.toUtc().toIso8601String(),
       }));
 

@@ -45,6 +45,7 @@ model User {
 model UserFollowedArtist {
   userId    String
   artistKey String
+  artistName String?
   user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([userId, artistKey])

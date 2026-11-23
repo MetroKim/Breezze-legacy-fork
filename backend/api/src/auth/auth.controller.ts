@@ -87,17 +87,6 @@ export class RefreshDto {
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
-  @Post('register')
-  register(@Body() dto: RegisterDto) {
-    return this.auth.register(dto.email, dto.password, dto.displayName);
-  }
-
-  @Post('login')
-  @HttpCode(HttpStatus.OK)
-  login(@Body() dto: LoginDto) {
-    return this.auth.login(dto.email, dto.password);
-  }
-
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   refresh(@Body() dto: RefreshDto) {
@@ -116,18 +105,6 @@ export class AuthController {
   async logoutAllDevices(@CurrentUser() userId: string) {
     await this.auth.revokeAllSessions(userId);
     return { revoked: true };
-  }
-
-  @Post('password/change')
-  @HttpCode(HttpStatus.OK)
-  @Header('Cache-Control', 'private, no-store')
-  @UseGuards(JwtAuthGuard)
-  async changePassword(
-    @CurrentUser() userId: string,
-    @Body() dto: ChangePasswordDto,
-  ) {
-    await this.auth.changePassword(userId, dto.currentPassword, dto.newPassword);
-    return { changed: true, sessionsRevoked: true };
   }
 
   @Post('mfa/setup')

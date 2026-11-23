@@ -3,6 +3,7 @@ import {
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
+import * as argon2 from 'argon2';
 import { PrismaService } from '../prisma.service';
 import { AuthService } from './auth.service';
 import { SupabaseAuthBridge } from './supabase-auth.bridge';
@@ -17,6 +18,7 @@ const supabaseUser = {
 describe('SupabaseAuthBridge (private NestJS identity exchange)', () => {
   const oldUrl = process.env.SUPABASE_URL;
   const oldKey = process.env.SUPABASE_PUBLISHABLE_KEY;
+  const oldClaim = process.env.SUPABASE_LEGACY_CLAIM_ENABLED;
   let prisma: any;
   let auth: any;
   let bridge: SupabaseAuthBridge;
@@ -43,6 +45,7 @@ describe('SupabaseAuthBridge (private NestJS identity exchange)', () => {
       user: { id: 'breezze-1', email: 'listener@example.test' },
     }) };
     bridge = new SupabaseAuthBridge(prisma as PrismaService, auth as AuthService);
+    process.env.SUPABASE_LEGACY_CLAIM_ENABLED = 'true';
     fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(
       new Response(JSON.stringify(supabaseUser), { status: 200 }),
     );
@@ -54,6 +57,8 @@ describe('SupabaseAuthBridge (private NestJS identity exchange)', () => {
     else process.env.SUPABASE_URL = oldUrl;
     if (oldKey === undefined) delete process.env.SUPABASE_PUBLISHABLE_KEY;
     else process.env.SUPABASE_PUBLISHABLE_KEY = oldKey;
+    if (oldClaim === undefined) delete process.env.SUPABASE_LEGACY_CLAIM_ENABLED;
+    else process.env.SUPABASE_LEGACY_CLAIM_ENABLED = oldClaim;
   });
 
   it('verifies a Supabase user via /auth/v1/user before issuing a Breezze session', async () => {
@@ -130,4 +135,33 @@ describe('SupabaseAuthBridge (private NestJS identity exchange)', () => {
     fetchSpy.mockRejectedValue(new Error('network offline'));
     await expect(bridge.exchange(token)).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
+  it('claims an existing listener only after both Supabase identity and old Argon2 password', async () => {
+    const hash = await argon2.hash('correct old password', {type:argon2.argon2id});
+    prisma.user.findFirst.mockResolvedValue({id:'existing-user',passwordHash:hash});
+    await expect(bridge.claimLegacy(token, supabaseUser.email, 'correct old password'))
+      .resolves.toMatchObject({accessToken:'breezze-session'});
+    expect(prisma.supabaseAuthIdentity.create).toHaveBeenCalledWith({
+      data:{ userId:'existing-user', subject:supabaseUser.id },
+    });
+    expect(auth.issueVerifiedSocialSession).toHaveBeenCalledWith('existing-user');
+  });
+
+  it('rejects wrong passwords and unrelated Supabase emails without linking', async () => {
+    const hash = await argon2.hash('correct old password', {type:argon2.argon2id});
+    prisma.user.findFirst.mockResolvedValue({id:'existing-user',passwordHash:hash});
+    await expect(bridge.claimLegacy(token,'another@example.test','correct old password'))
+      .rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(bridge.claimLegacy(token,supabaseUser.email,'incorrect password'))
+      .rejects.toBeInstanceOf(UnauthorizedException);
+    expect(prisma.supabaseAuthIdentity.create).not.toHaveBeenCalled();
+    expect(auth.issueVerifiedSocialSession).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when legacy account migration is turned off', async () => {
+    delete process.env.SUPABASE_LEGACY_CLAIM_ENABLED;
+    await expect(bridge.claimLegacy(token, supabaseUser.email, 'password'))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
 });

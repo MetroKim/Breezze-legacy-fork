@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:breezze/core/audio/audio_service_bridge.dart';
@@ -9,11 +8,12 @@ import 'package:breezze/main.dart' as app;
 import 'package:breezze_api_client/breezze_api_client.dart';
 import 'package:breezze_audio_contracts/audio_contracts.dart' show PlaybackState;
 import 'package:file_selector/file_selector.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:video_player/video_player.dart';
 
 class _FixtureLyrics implements LyricsHttp {
   @override
@@ -61,6 +61,7 @@ void main() {
     }
     expect(await library.list(ownerId: 'another-listener'), isEmpty);
     final saved = (await library.list(ownerId: 'listener')).single;
+    expect(saved.trackId, track.id);
     expect(await File(saved.audioPath).readAsBytes(), orderedEquals(bytes));
     await player.playTrack(trackId: saved.catalogTrackId, title: saved.title, localFilePath: saved.audioPath);
     await until('offline audio position', () => current().position > const Duration(milliseconds: 600));
@@ -80,18 +81,32 @@ void main() {
     final route = openDeviceVideo(context, XFile(videoFile.path));
     await until('native video ready', () => find.byTooltip('Play video').evaluate().isNotEmpty);
     expect(current().playbackState, PlaybackState.paused);
+    final video = tester.widget<VideoPlayer>(find.byType(VideoPlayer)).controller;
+    await until('video route fully visible', () =>
+        ModalRoute.of(tester.element(find.byType(VideoPlayer)))?.animation?.isCompleted == true);
     await tester.tap(find.byTooltip('Play video'));
+    await until('video decoder advancing', () => video.value.position.inMilliseconds > 100);
+    await until('video route removed', () => find.byType(VideoPlayer).evaluate().isEmpty);
+    debugPrint('After video pop: audio=${current().playbackState}, lifecycle=${WidgetsBinding.instance.lifecycleState}');
     await until('video finished and audio resumed', () => find.byTooltip('Play video').evaluate().isEmpty &&
         current().playbackState == PlaybackState.playing);
     await route.timeout(const Duration(seconds: 5));
     final resumedAt = current().position;
     await until('audio advancing after video', () => current().position > resumedAt + const Duration(milliseconds: 400));
 
+    debugPrint('Verified local download, offline decode, seek and video handoff');
     if (Platform.isAndroid && const bool.fromEnvironment('QA_ANDROID_MEDIA_KEYS')) {
       debugPrint('QA_ANDROID_MEDIA_KEYS_READY');
       await until('OS pause command', () => current().playbackState == PlaybackState.paused, seconds: 45);
       debugPrint('QA_ANDROID_OS_PAUSED');
       await until('OS play command', () => current().playbackState == PlaybackState.playing, seconds: 45);
+    }
+    if (const bool.fromEnvironment('QA_LIVE_PREVIEW')) {
+      await player.playTrack(trackId: 'bz:deezer_preview:3135556', title: 'Deezer preview');
+      await until('live preview decode', () => current().playbackState == PlaybackState.playing &&
+          current().position > const Duration(milliseconds: 500) &&
+          current().duration.inSeconds >= 25 && current().duration.inSeconds <= 35);
+      debugPrint('Verified live preview on native decoder');
     }
   }, timeout: const Timeout(Duration(minutes: 4)));
 }

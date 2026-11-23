@@ -11,8 +11,12 @@ sed '/^  assets:/a\
 ' "$saved_manifest" > pubspec.yaml
 flutter pub get
 dart run build_runner build --delete-conflicting-outputs
+live_args=()
+if [[ -n "${QA_PREVIEW_API_ORIGIN:-}" ]]; then
+  live_args+=(--dart-define=QA_LIVE_PREVIEW=true "--dart-define=BREEZZE_API_URL=$QA_PREVIEW_API_ORIGIN")
+fi
 if [[ "$device" != emulator-* ]]; then
-  flutter test -d "$device" integration_test/listener_runtime_test.dart --reporter expanded
+  flutter test -d "$device" integration_test/listener_runtime_test.dart --reporter expanded "${live_args[@]}"
   exit
 fi
 
@@ -25,7 +29,7 @@ wait_for_marker() {
   done
   return 1
 }
-flutter test -d "$device" integration_test/listener_runtime_test.dart --reporter expanded --dart-define=QA_ANDROID_MEDIA_KEYS=true >"$log" 2>&1 &
+flutter test -d "$device" integration_test/listener_runtime_test.dart --reporter expanded "${live_args[@]}" --dart-define=QA_ANDROID_MEDIA_KEYS=true >"$log" 2>&1 &
 test_pid=$!
 if wait_for_marker QA_ANDROID_MEDIA_KEYS_READY; then
   adb -s "$device" shell input keyevent KEYCODE_HOME

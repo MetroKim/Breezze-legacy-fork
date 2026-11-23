@@ -37,7 +37,11 @@ Future<void> openVideoSurface(BuildContext context, WidgetBuilder builder) async
   if (resumeAudio) await controller.pause();
   try {
     if (!context.mounted) return;
-    await Navigator.of(context).push(MaterialPageRoute<void>(builder: builder));
+    final route = MaterialPageRoute<void>(builder: builder);
+    await Navigator.of(context).push(route);
+    // The pop result arrives while the video widget still owns its decoder.
+    // Wait for the reverse transition and disposal before resuming audio.
+    await route.completed;
   } finally {
     if (context.mounted && resumeAudio && entry != null &&
         controller.queue.current?.entryId == entry &&

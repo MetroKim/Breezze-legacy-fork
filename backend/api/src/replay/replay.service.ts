@@ -15,10 +15,19 @@ export class ReplayService {
     private readonly rights: RightsDecisionService,
   ) {}
 
-  async summary(userId: string, edgeTerritory?: string): Promise<ReplaySummary> {
+  async summary(userId: string, edgeTerritory?: string, year?: number): Promise<ReplaySummary> {
     const territory = edgeTerritory?.trim().toUpperCase() ?? '';
     const rawEvents = await this.prisma.listeningEvent.findMany({
-      where: { userId, isServerVerified: true },
+      where: {
+        userId,
+        isServerVerified: true,
+        ...(year == null ? {} : {
+          createdAt: {
+            gte: new Date(Date.UTC(year, 0, 1)),
+            lt: new Date(Date.UTC(year + 1, 0, 1)),
+          },
+        }),
+      },
       select: { trackId: true },
     });
     const visibleTrackIds = await this.rights.filterMetadataDisplay(

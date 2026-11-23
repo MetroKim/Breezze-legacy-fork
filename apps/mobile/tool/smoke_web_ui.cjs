@@ -28,23 +28,51 @@ async function main() {
       reducedMotion: 'reduce',
     });
     const errors = [];
+    const consoleErrors = [];
+    const failedRequests = [];
     page.on('pageerror', error => errors.push(error.message));
+    page.on('console', message => {
+      if (message.type() === 'error') consoleErrors.push(message.text());
+    });
+    page.on('requestfailed', request => {
+      failedRequests.push({
+        url: request.url(),
+        failure: request.failure()?.errorText,
+      });
+    });
+    const shot = path.join(process.env.RUNNER_TEMP, 'breezze-mobile-preview.png');
     await page.goto('http://127.0.0.1:8080/', {
       waitUntil: 'domcontentloaded',
       timeout: 90000,
     });
-    await page.waitForFunction(
-      () => {
-        const host = document.querySelector('flutter-view, flt-glass-pane');
-        const rendered = document.querySelector('canvas, flt-scene-host');
-        return host !== null && rendered !== null;
-      },
-      null,
-      { timeout: 90000 },
-    );
-    await page.waitForTimeout(2500);
 
-    const shot = path.join(process.env.RUNNER_TEMP, 'breezze-mobile-preview.png');
+    try {
+      await page.waitForFunction(
+        () => {
+          const host = document.querySelector('flutter-view, flt-glass-pane');
+          const rendered = document.querySelector('canvas, flt-scene-host');
+          return host !== null && rendered !== null;
+        },
+        null,
+        { timeout: 60000 },
+      );
+    } catch (error) {
+      const details = await page.evaluate(() => ({
+        title: document.title,
+        readyState: document.readyState,
+        body: document.body.innerHTML.slice(0, 4000),
+        canvasCount: document.querySelectorAll('canvas').length,
+        flutterHostCount: document.querySelectorAll('flutter-view, flt-glass-pane').length,
+        scriptUrls: [...document.querySelectorAll('script')].map(s => s.src),
+      }));
+      console.error('Breezze browser DOM diagnostics:', JSON.stringify(details));
+      console.error('Breezze browser JS errors:', JSON.stringify(errors));
+      console.error('Breezze browser console errors:', JSON.stringify(consoleErrors));
+      console.error('Breezze browser failed requests:', JSON.stringify(failedRequests));
+      await page.screenshot({ path: shot, fullPage: true });
+      throw error;
+    }
+    await page.waitForTimeout(2500);
     await page.screenshot({ path: shot, fullPage: true });
     const size = fs.statSync(shot).size;
     assert.ok(size > 5000, 'Browser screenshot is unexpectedly small');

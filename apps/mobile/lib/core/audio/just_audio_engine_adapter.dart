@@ -91,6 +91,11 @@ class JustAudioEngineAdapter implements AudioEngineAdapter, GaplessLocalQueueEng
     }
   }
 
+  @override
+  bool get supportsGaplessLocalFiles => !kIsWeb &&
+      [TargetPlatform.android, TargetPlatform.iOS, TargetPlatform.macOS]
+          .contains(defaultTargetPlatform);
+
   /// A native playlist is safe only for local sources. Licensed streams
   /// have per-track rights, grant expiries and heartbeat sessions.
   @override
@@ -98,7 +103,7 @@ class JustAudioEngineAdapter implements AudioEngineAdapter, GaplessLocalQueueEng
     List<PlayableSource> sources, {
     required int initialIndex,
   }) async {
-    if (sources.length < 2 || initialIndex < 0 ||
+    if (!supportsGaplessLocalFiles || sources.length < 2 || initialIndex < 0 ||
         initialIndex >= sources.length ||
         sources.any((source) => !source.isLocal ||
             source.streamUrl.isEmpty ||

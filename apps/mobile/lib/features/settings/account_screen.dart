@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart' as supa;
 
 import '../../core/auth/auth_session.dart';
 import '../../app/breezze_ui_strings.dart';
+import '../../app/language_controller.dart';
 import '../../widgets/bz_brand_icons.dart';
 
 class AccountScreen extends ConsumerStatefulWidget {
@@ -17,7 +18,6 @@ class AccountScreen extends ConsumerStatefulWidget {
 class _AccountScreenState extends ConsumerState<AccountScreen> {
   final _name = TextEditingController();
   final _country = TextEditingController();
-  final _language = TextEditingController();
   final _genres = TextEditingController();
   final _favoriteArtists = TextEditingController();
   bool _loading = true;
@@ -35,7 +35,6 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
   void dispose() {
     _name.dispose();
     _country.dispose();
-    _language.dispose();
     _genres.dispose();
     _favoriteArtists.dispose();
     super.dispose();
@@ -66,7 +65,6 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
         _name.text = data['display_name'] as String? ??
             user.userMetadata?['full_name'] as String? ?? '';
         _country.text = data['country'] as String? ?? '';
-        _language.text = data['language'] as String? ?? '';
         _genres.text = (data['genres'] as List<dynamic>? ?? const [])
             .whereType<String>().join(', ');
         _favoriteArtists.text =
@@ -87,7 +85,6 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
   Future<void> _saveProfile() async {
     final name = _name.text.trim();
     final country = _country.text.trim().toUpperCase();
-    final language = _language.text.trim();
     if (name.isEmpty || name.length > 80) {
       setState(() => _error = 'Display name must be between 1 and 80 characters.');
       return;
@@ -96,10 +93,6 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
         (country.length != 2 ||
             !country.codeUnits.every((unit) => unit >= 65 && unit <= 90))) {
       setState(() => _error = 'Country must be a two-letter ISO code, such as TZ.');
-      return;
-    }
-    if (language.length > 16) {
-      setState(() => _error = 'Language must be 16 characters or fewer.');
       return;
     }
     List<String> genres;
@@ -120,7 +113,6 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
         'id': user.id,
         'display_name': name,
         'country': country.isEmpty ? null : country,
-        'language': language.isEmpty ? null : language,
         'genres': genres,
         'favorite_artists': artists,
         'updated_at': DateTime.now().toUtc().toIso8601String(),
@@ -237,8 +229,15 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                 TextField(controller: _country, maxLength: 2,
                   textCapitalization: TextCapitalization.characters,
                   decoration: const InputDecoration(labelText: 'Country code', hintText: 'TZ', helperText: 'Two-letter country code used for availability.')),
-                TextField(controller: _language, maxLength: 16,
-                  decoration: const InputDecoration(labelText: 'Preferred language', hintText: 'en')),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text(
+                    'App language: ${breezzeLanguageName(
+                      ref.watch(appLanguageProvider).valueOrNull ?? 'en'
+                    )} (change in Settings)',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
                 TextField(controller: _genres, maxLength: 800,
                   decoration: const InputDecoration(labelText: 'Favorite genres', hintText: 'Afrobeats, R&B, Hip-hop', helperText: 'Separate values with commas.')),
                 TextField(controller: _favoriteArtists, maxLength: 4000, maxLines: 2,

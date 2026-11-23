@@ -147,11 +147,8 @@ export class SupabaseAuthBridge {
   }
 
 
-  /**
-   * Migration-only claim: a real, email-verified Supabase session PLUS
-   * knowledge of the old Breezze password. Matching emails alone never
-   * transfer library ownership. Retire after all remaining accounts migrate.
-   */
+  /** Explicit migration claim requires verified Supabase identity and old
+   * Breezze password. Never merge preexisting accounts by matching email. */
   async claimLegacy(accessToken: string, email: string, legacyPassword: string) {
     if (process.env.SUPABASE_LEGACY_CLAIM_ENABLED !== 'true') {
       throw new ServiceUnavailableException('SUPABASE_ACCOUNT_MIGRATION_DISABLED');
@@ -160,53 +157,16 @@ export class SupabaseAuthBridge {
     if (identity.email !== email.trim().toLowerCase()) {
       throw new UnauthorizedException('INVALID_CREDENTIALS');
     }
-    const already = await this.prisma.supabaseAuthIdentity.findUnique({
-      where: { subject: identity.id }, select: { userId: true },
-    });
-    if (already) return this.auth.issueVerifiedSocialSession(already.userId);
     const owner = await this.prisma.user.findFirst({
       where: { email: { equals: identity.email, mode: 'insensitive' } },
       select: { id: true, passwordHash: true },
     });
-    const hash = owner?.passwordHash;
-    if (!hash || !hash.startsWith('$argon2id
-    const identity = await this.verifyAccessToken(accessToken);
-    const owner = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { id: true, email: true },
-    });
-    if (!owner || owner.email.toLowerCase() !== identity.email) {
-      throw new UnauthorizedException('SUPABASE_IDENTITY_EMAIL_MISMATCH');
-    }
-    const linked = await this.prisma.supabaseAuthIdentity.findUnique({
-      where: { subject: identity.id },
-      select: { userId: true },
-    });
-    if (linked) {
-      if (linked.userId !== userId) {
-        throw new ConflictException('SUPABASE_IDENTITY_IN_USE');
-      }
-      return { linked: true };
-    }
-    try {
-      await this.prisma.supabaseAuthIdentity.create({
-        data: { userId, subject: identity.id },
-      });
-    } catch (error) {
-      if ((error as { code?: string })?.code === 'P2002') {
-        throw new ConflictException('SUPABASE_IDENTITY_IN_USE');
-      }
-      throw error;
-    }
-    return { linked: true };
-  }
-}
-)) {
+    if (!owner?.passwordHash.startsWith('$argon2id$')) {
       throw new UnauthorizedException('INVALID_CREDENTIALS');
     }
     let verified = false;
     try {
-      verified = await argon2.verify(hash, legacyPassword);
+      verified = await argon2.verify(owner.passwordHash, legacyPassword);
     } catch (_) {
       verified = false;
     }

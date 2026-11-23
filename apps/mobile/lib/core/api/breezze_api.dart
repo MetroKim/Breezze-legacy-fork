@@ -261,13 +261,10 @@ class BreezzeApi {
 
   // ---- auth ----
 
-  /// Exchange the short-lived verified Supabase access JWT for a revocable
-  /// Breezze device session. App API permissions remain server-controlled.
+
   Future<AuthResponse> exchangeSupabaseSession(String accessToken) async {
-    final response = await _post('/auth/supabase/exchange', {
-      'accessToken': accessToken,
-    });
-    return AuthResponse.fromJson(response);
+    final result = await _post('/auth/supabase/exchange', {'accessToken': accessToken});
+    return AuthResponse.fromJson(result);
   }
 
   Future<AuthResponse> claimSupabaseLegacyAccount({
@@ -275,12 +272,11 @@ class BreezzeApi {
     required String email,
     required String legacyPassword,
   }) async {
-    final response = await _post('/auth/supabase/claim', {
-      'accessToken': accessToken,
-      'email': email,
+    final result = await _post('/auth/supabase/claim', {
+      'accessToken': accessToken, 'email': email,
       'legacyPassword': legacyPassword,
     });
-    return AuthResponse.fromJson(response);
+    return AuthResponse.fromJson(result);
   }
 
   Future<AuthResponse> refresh(String refreshToken) async {

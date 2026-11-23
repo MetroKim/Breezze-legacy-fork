@@ -23,7 +23,9 @@ class _OnboardingFlowState extends ConsumerState<OnboardingFlow> {
   int _step = 0;
 
   void _next() => setState(() => _step++);
-  void _back() => setState(() => _step = _step.clamp(0, 2) - 1);
+  void _back() {
+    if (_step > 0) setState(() => _step--);
+  }
 
   Future<void> _finish() async {
     final controller = ref.read(onboardingProvider.notifier);

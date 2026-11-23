@@ -94,3 +94,16 @@ No decorative emoji, fake tracks, fabricated charts or broken CTA actions.
 widget, route, API stub or architecture file exists. Production-ready claims
 require verified action, authorized backend data, explicit failure/empty
 states, and automated/device evidence at the final commit.
+
+## Current UX and rendered-browser acceptance extension
+
+- Empty Now Playing state includes an accessible Close and Back to music
+  action, instead of leaving a listener in an undismissable full-screen shell.
+- The full-screen progress slider stages drag values locally and commits one
+  seek when released; unavailable duration disables seeking.
+- The navigation selection transition honors the OS reduce-motion preference,
+  and onboarding back navigation clamps to the first step.
+- The Flutter web preview workflow launches actual headless Chromium at a
+  390px mobile viewport, checks for a rendered Flutter scene, records uncaught
+  JavaScript exceptions, and publishes a screenshot artifact. This extends
+  but does not replace manual screen-reader/physical-device verification.

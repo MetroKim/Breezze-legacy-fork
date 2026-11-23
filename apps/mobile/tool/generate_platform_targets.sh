@@ -227,9 +227,9 @@ if os.environ.get("BREEZZE_APPLE_SIGN_IN_ENABLED") == "1":
         contents = project_file.read_text()
         if "CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;" not in contents:
             contents = re.sub(
-                r"(?m)^(\\s*)PRODUCT_BUNDLE_IDENTIFIER = com\\.breezze\\.breezze;",
+                r"(?m)^(\s*)PRODUCT_BUNDLE_IDENTIFIER = com\.breezze\.breezze;",
                 lambda m: m.group(1) +
-                    "CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;\\n" +
+                    "CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;\n" +
                     m.group(0),
                 contents,
             )

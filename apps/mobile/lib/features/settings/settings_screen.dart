@@ -8,7 +8,6 @@ import '../../app/search_history_store.dart';
 import '../../core/auth/auth_session.dart';
 import 'account_screen.dart';
 import 'account_sign_out.dart';
-import 'change_password_screen.dart';
 import 'help_support_screen.dart';
 import '../notifications/notifications_screen.dart';
 import '../player/sleep_timer_controller.dart';
@@ -151,15 +150,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 MaterialPageRoute(builder: (_) => const NotificationsScreen()),
               ),
             ),
-            if (auth is AuthSignedIn &&
-                !ref.read(authSessionProvider.notifier).usesAuth0Auth)
+            if (auth is AuthSignedIn)
               ListTile(
                 leading: const BzSvgIcon(name: 'settings'),
-                title: const Text('Security and password'),
+                title: const Text('Password recovery'),
+                subtitle: const Text('Managed by Supabase Auth'),
                 trailing: const BzSvgIcon(name: 'chevron-right'),
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const ChangePasswordScreen()),
-                ),
+                onTap: () async {
+                  try {
+                    await ref.read(authSessionProvider.notifier)
+                        .requestPasswordReset(auth.email);
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('If your account exists, check your email for a reset link.'),
+                    ));
+                  } catch (_) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('Password recovery is temporarily unavailable.'),
+                    ));
+                  }
+                },
               ),
             if (auth is AuthSignedIn)
               ListTile(

@@ -5,7 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/auth/auth_session.dart';
 import '../authentication/auth_screen.dart';
 import 'account_sign_out.dart';
-import 'change_password_screen.dart';
 import 'help_support_screen.dart';
 import '../../widgets/bz_brand_icons.dart';
 
@@ -25,19 +24,12 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
   List<Map<String, dynamic>> _sessions = const [];
   bool _loading = true;
   bool _saving = false;
-  Future<Map<String, dynamic>>? _auth0LinkFlow;
   String? _error;
   String? _email;
 
   @override
   void initState() {
     super.initState();
-    final session = ref.read(authSessionProvider.notifier);
-    if (session.usesAuth0Auth && !session.usesAuth0Embedded &&
-        ref.read(authSessionProvider) is AuthSignedIn) {
-      _auth0LinkFlow = session.api.startAuth0Link()
-          .catchError((Object _) => <String, dynamic>{});
-    }
     _load();
   }
 
@@ -163,130 +155,18 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
     }
   }
 
-  /// Confirm the verified Auth0 identity without leaving Breezze in
-  /// embedded mode. Legacy hosted pairing remains available only when
-  /// the explicitly selected build mode requires it.
-  Future<void> _linkAuth0() async {
-    if (_saving) return;
-    final session = ref.read(authSessionProvider.notifier);
-    String? email;
-    String? password;
-    if (session.usesAuth0Embedded) {
-      email = _email;
-      if (email == null || email.isEmpty) {
-        setState(() => _error = 'Account details must load before linking.');
-        return;
-      }
-      password = await showDialog<String>(
-        context: context,
-        builder: (dialogContext) {
-          var typedPassword = '';
-          return AlertDialog(
-            title: const Text('Link your Auth0 account'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text('Sign in as $email to keep your existing playlists and library.'),
-                const SizedBox(height: 20),
-                TextField(
-                  obscureText: true,
-                  autofocus: true,
-                  autofillHints: const [AutofillHints.password],
-                  onChanged: (value) => typedPassword = value,
-                  decoration: const InputDecoration(
-                    labelText: 'Auth0 password',
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(dialogContext).pop(typedPassword),
-                child: const Text('Link account'),
-              ),
-            ],
-          );
-        },
-      );
-      if (!mounted || password == null || password.isEmpty) return;
-    }
+  Future<void> _requestPasswordReset() async {
+    final email = _email;
+    if (_saving || email == null || email.isEmpty) return;
     setState(() { _saving = true; _error = null; });
     try {
-      if (session.usesAuth0Embedded) {
-        await session.api.linkAuth0Embedded(email!, password!);
-      } else {
-        final prepared = await _auth0LinkFlow;
-        final expiry = prepared?['expiresAt'];
-        final expiresAt = expiry is String ? DateTime.tryParse(expiry) : null;
-        final ready = expiresAt != null &&
-            expiresAt.isAfter(DateTime.now().toUtc().add(const Duration(seconds: 15)));
-        await session.linkAuth0(
-          preparedFlow: ready ? prepared : await session.api.startAuth0Link(),
-        );
-      }
+      await ref.read(authSessionProvider.notifier).requestPasswordReset(email);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Auth0 sign-in linked to your Breezze account')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('If your account exists, check your email for a password reset link.'),
+      ));
     } catch (_) {
-      if (mounted) {
-        setState(() => _error =
-            'Could not link Auth0. Make sure both accounts use the same verified email.');
-      }
-    } finally {
-      password = null;
-      if (mounted) {
-        if (!session.usesAuth0Embedded) {
-          _auth0LinkFlow = session.api.startAuth0Link()
-              .catchError((Object _) => <String, dynamic>{});
-        }
-        setState(() => _saving = false);
-      }
-    }
-  }
-
-  Future<void> _deleteAccount() async {
-    final password = TextEditingController();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete your account?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('This permanently deletes your Breezze account and associated server data. This action cannot be undone.'),
-            const SizedBox(height: 12),
-            TextField(
-              controller: password,
-              obscureText: true,
-              decoration: const InputDecoration(labelText: 'Confirm with your password'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete account')),
-        ],
-      ),
-    );
-    final value = password.text;
-    password.dispose();
-    if (confirmed != true || value.isEmpty) return;
-    setState(() {
-      _saving = true;
-      _error = null;
-    });
-    try {
-      await ref.read(authSessionProvider.notifier).api.deleteAccount(password: value);
-      await ref.read(authSessionProvider.notifier).signOut();
-      if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
-    } catch (_) {
-      if (mounted) setState(() => _error = 'Account deletion failed. Check your password and try again.');
+      if (mounted) setState(() => _error = 'Password recovery is temporarily unavailable.');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -440,27 +320,13 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                 const SizedBox(height: 28),
                 Text('SECURITY', style: theme.textTheme.labelLarge),
                 const SizedBox(height: 8),
-                if (!ref.read(authSessionProvider.notifier).usesAuth0Auth)
                 ListTile(
                   leading: const BzSvgIcon(name: 'settings'),
-                  title: const Text('Change password'),
-                  subtitle: const Text('Sign out of all devices after changing'),
+                  title: const Text('Reset password'),
+                  subtitle: const Text('Secure recovery through Supabase'),
                   trailing: const BzSvgIcon(name: 'chevron-right'),
-                  onTap: _saving ? null : () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const ChangePasswordScreen()),
-                  ),
+                  onTap: _saving ? null : _requestPasswordReset,
                 ),
-                if (ref.read(authSessionProvider.notifier).usesAuth0Auth)
-                  ListTile(
-                    leading: const BzSvgIcon(name: 'settings'),
-                    title: const Text('Link Auth0 sign-in'),
-                    subtitle: Text(
-                        ref.read(authSessionProvider.notifier).usesAuth0Embedded
-                            ? 'Link securely without leaving Breezze'
-                            : 'Keep your library when switching from your existing Breezze account'),
-                    trailing: const BzSvgIcon(name: 'chevron-right'),
-                    onTap: _saving ? null : _linkAuth0,
-                  ),
                 const SizedBox(height: 28),
                 Text('ACTIVE SESSIONS', style: theme.textTheme.labelLarge),
                 const SizedBox(height: 8),
@@ -484,24 +350,15 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                   subtitle: const Text('This device or all devices'),
                   onTap: _saving ? null : () => confirmBreezzeSignOut(context, ref),
                 ),
-                if (ref.read(authSessionProvider.notifier).usesAuth0Auth)
-                  OutlinedButton(
-                    onPressed: _saving ? null : () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const HelpSupportScreen(),
-                      ),
+                OutlinedButton(
+                  onPressed: _saving ? null : () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const HelpSupportScreen(),
                     ),
-                    style: OutlinedButton.styleFrom(
-                        foregroundColor: theme.colorScheme.error),
-                    child: const Text('Request account deletion'),
-                  )
-                else
-                  OutlinedButton(
-                    onPressed: _saving ? null : _deleteAccount,
-                    style: OutlinedButton.styleFrom(
-                        foregroundColor: theme.colorScheme.error),
-                    child: const Text('Delete account'),
                   ),
+                  style: OutlinedButton.styleFrom(foregroundColor: theme.colorScheme.error),
+                  child: const Text('Request account deletion'),
+                ),
               ],
             ),
     );

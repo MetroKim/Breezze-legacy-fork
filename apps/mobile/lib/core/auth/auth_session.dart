@@ -1,12 +1,18 @@
-import 'package:flutter/foundation.dart' show kReleaseMode;
-import 'package:url_launcher/url_launcher.dart';
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb, kReleaseMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as supa;
 
 import '../api/breezze_api.dart';
 import '../../features/player/player_controller.dart';
 
-/// Auth session state — what the UI renders.
+/// Supabase Auth is Breezze's only identity and session authority.
 sealed class AuthState {
   const AuthState();
 }
@@ -30,32 +36,9 @@ class AuthSignedIn extends AuthState {
   const AuthSignedIn({required this.userId, required this.email});
 }
 
-class AuthMfaRequired extends AuthState {
-  final String userId;
+class AuthEmailConfirmationRequired extends AuthState {
   final String email;
-  final bool setupRequired;
-  final String? secret;
-  final String? provisioningUri;
-
-  const AuthMfaRequired({
-    required this.userId,
-    required this.email,
-    required this.setupRequired,
-    this.secret,
-    this.provisioningUri,
-  });
-}
-
-class AuthMfaRecoveryCodes extends AuthState {
-  final String userId;
-  final String email;
-  final List<String> codes;
-
-  const AuthMfaRecoveryCodes({
-    required this.userId,
-    required this.email,
-    required this.codes,
-  });
+  const AuthEmailConfirmationRequired(this.email);
 }
 
 class AuthError extends AuthState {
@@ -63,17 +46,19 @@ class AuthError extends AuthState {
   const AuthError(this.code);
 }
 
-/// Session controller: access tokens remain memory-only; refresh tokens use
-/// iOS Keychain / Android Keystore-backed secure storage.
 class AuthSessionController extends Notifier<AuthState> {
-  Future<bool>? _refreshInFlight;
-  int _socialAttempt = 0;
-  static const _refreshTokenKey = 'breezze.refresh_token';
-  static const _secureStorage = FlutterSecureStorage();
-
   static const _configuredApiUrl = String.fromEnvironment('BREEZZE_API_URL');
   static const _productionApiUrl =
       'https://breezze-api-edge.ykw8vmq7ph.workers.dev';
+  static const _googleWebClientId =
+      String.fromEnvironment('GOOGLE_WEB_CLIENT_ID');
+  static const _googleIosClientId =
+      String.fromEnvironment('GOOGLE_IOS_CLIENT_ID');
+  static const _callback = 'io.breezze.app://login-callback/';
+
+  StreamSubscription<supa.AuthState>? _sessionListener;
+  Future<void>? _googleInitialization;
+  Future<bool>? _refreshInFlight;
 
   late final BreezzeApi _api = BreezzeApi(
     baseUrl: _configuredApiUrl.isNotEmpty
@@ -81,71 +66,78 @@ class AuthSessionController extends Notifier<AuthState> {
         : (kReleaseMode ? _productionApiUrl : 'http://localhost:3000'),
   )..onUnauthorized = _refreshAccessToken;
 
+  supa.SupabaseClient get _client => supa.Supabase.instance.client;
+  BreezzeApi get api => _api;
+
   @override
   AuthState build() {
+    ref.onDispose(() {
+      _sessionListener?.cancel();
+      _api.accessToken = null;
+    });
     return const AuthUninitialized();
   }
 
-  BreezzeApi get api => _api;
+  void _applySession(supa.Session? session) {
+    final identity = session?.user;
+    final email = identity?.email;
+    _api.accessToken = session?.accessToken;
+    if (identity != null && email != null && email.isNotEmpty) {
+      state = AuthSignedIn(userId: identity.id, email: email);
+    } else {
+      state = const AuthSignedOut();
+    }
+  }
+
+  Future<void> restoreSession() async {
+    _sessionListener ??= _client.auth.onAuthStateChange.listen(
+      (event) => _applySession(event.session),
+      onError: (Object _) {
+        // Network failures do not destroy an otherwise valid local session.
+      },
+    );
+    _applySession(_client.auth.currentSession);
+  }
 
   Future<bool> _refreshAccessToken() async {
-    final active = _refreshInFlight;
-    if (active != null) return active;
-    final pending = _performRefresh();
-    _refreshInFlight = pending;
+    final inflight = _refreshInFlight;
+    if (inflight != null) return inflight;
+    final future = _refreshSession();
+    _refreshInFlight = future;
     try {
-      return await pending;
+      return await future;
     } finally {
       _refreshInFlight = null;
     }
   }
 
-  Future<bool> _performRefresh() async {
+  Future<bool> _refreshSession() async {
     try {
-      final refreshToken = await _secureStorage.read(key: _refreshTokenKey);
-      if (refreshToken == null || refreshToken.isEmpty) return false;
-      final response = await _api.refresh(refreshToken);
-      await _persistSession(response);
+      final response = await _client.auth.refreshSession();
+      if (response.session == null) return false;
+      _applySession(response.session);
       return true;
     } catch (_) {
-      _api.accessToken = null;
-      try {
-        await _secureStorage.delete(key: _refreshTokenKey);
-      } catch (_) {}
-      state = const AuthSignedOut();
       return false;
     }
   }
 
-  Future<void> restoreSession() async {
+  Future<void> login(String email, String password) async {
+    state = const AuthSigningIn();
     try {
-      final refreshToken = await _secureStorage.read(key: _refreshTokenKey);
-      if (refreshToken == null || refreshToken.isEmpty) {
-        state = const AuthSignedOut();
-        return;
-      }
-      final response = await _api.refresh(refreshToken);
-      await _persistSession(response);
-    } catch (_) {
-      _api.accessToken = null;
-      try {
-        await _secureStorage.delete(key: _refreshTokenKey);
-      } catch (_) {}
-      state = const AuthSignedOut();
-    }
-  }
-
-  Future<void> _persistSession(AuthResponse response) async {
-    await _secureStorage.write(key: _refreshTokenKey, value: response.refreshToken);
-    _api.accessToken = response.accessToken;
-    if (response.mfaRequired) {
-      state = AuthMfaRequired(
-        userId: response.userId,
-        email: response.email,
-        setupRequired: response.mfaSetupRequired,
+      final response = await _client.auth.signInWithPassword(
+        email: email.trim(),
+        password: password,
       );
-    } else {
-      state = AuthSignedIn(userId: response.userId, email: response.email);
+      if (response.session == null) {
+        state = const AuthError('INVALID_CREDENTIALS');
+      } else {
+        _applySession(response.session);
+      }
+    } on supa.AuthException catch (error) {
+      state = AuthError(_authError(error));
+    } catch (_) {
+      state = const AuthError('NETWORK_ERROR');
     }
   }
 
@@ -156,166 +148,168 @@ class AuthSessionController extends Notifier<AuthState> {
   }) async {
     state = const AuthSigningIn();
     try {
-      final response = await _api.register(email, password,
-          displayName: displayName);
-      await _persistSession(response);
-    } on BreezzeApiException catch (e) {
-      state = AuthError(e.code);
+      final result = await _client.auth.signUp(
+        email: email.trim(),
+        password: password,
+        data: displayName == null || displayName.isEmpty
+            ? null
+            : {'full_name': displayName},
+      );
+      if (result.session != null) {
+        _applySession(result.session);
+      } else {
+        state = AuthEmailConfirmationRequired(email.trim());
+      }
+    } on supa.AuthException catch (error) {
+      state = AuthError(_authError(error));
     } catch (_) {
       state = const AuthError('NETWORK_ERROR');
     }
   }
 
-  Future<void> login(String email, String password) async {
-    state = const AuthSigningIn();
-    try {
-      final response = await _api.login(email, password);
-      await _persistSession(response);
-    } on BreezzeApiException catch (e) {
-      state = AuthError(e.code);
-    } catch (_) {
-      state = const AuthError('NETWORK_ERROR');
-    }
-  }
-
-  Future<void> socialLogin(
-    String provider, {
-    Map<String, dynamic>? preparedFlow,
-  }) async {
-    final attempt = ++_socialAttempt;
+  Future<void> socialLogin(String provider) async {
     state = const AuthSigningIn(social: true);
     try {
-      // Preloaded flow keeps launchUrl on the original pointer activation
-      // for browsers that block asynchronous popups.
-      final flow = preparedFlow ?? await _api.startSocialLogin(provider);
-      if (attempt != _socialAttempt) return;
-      final flowId = flow['id'];
-      final pollSecret = flow['secret'];
-      final authorizationUrl = Uri.tryParse(flow['authorizationUrl'] as String? ?? '');
-      if (flowId is! String || pollSecret is! String ||
-          authorizationUrl == null || authorizationUrl.scheme != 'https') {
-        throw const BreezzeApiException(
-          code: 'SOCIAL_FLOW_INVALID',
-          message: 'The sign-in provider returned an invalid authorization URL.',
-        );
+      if (provider == 'google') {
+        await _signInWithGoogle();
+      } else if (provider == 'apple') {
+        await _signInWithApple();
+      } else {
+        state = const AuthError('PROVIDER_UNSUPPORTED');
+        return;
       }
-      if (!await launchUrl(authorizationUrl, mode: LaunchMode.externalApplication)) {
-        throw const BreezzeApiException(
-          code: 'SOCIAL_BROWSER_UNAVAILABLE',
-          message: 'Cannot open the secure system browser for sign-in.',
-        );
+      // OAuth returns before the system browser completes. The Supabase
+      // auth-state stream moves the user into Breezze once the callback lands.
+      if (state is AuthSigningIn) {
+        _applySession(_client.auth.currentSession);
       }
-      // The system browser never sees Breezze refresh tokens. The app
-      // redeems a single-use random pairing secret through the own backend.
-      for (var n = 0; n < 150; n++) {
-        await Future<void>.delayed(const Duration(seconds: 2));
-        if (attempt != _socialAttempt) return;
-        final result = await _api.pollSocialLogin(flowId: flowId, secret: pollSecret);
-        if (attempt != _socialAttempt) return;
-        if (result['status'] == 'pending') continue;
-        if (result['status'] == 'completed' && result['session'] is Map) {
-          final session = AuthResponse.fromJson(
-            Map<String, dynamic>.from(result['session'] as Map),
-          );
-          if (attempt != _socialAttempt) return;
-          await _persistSession(session);
-          return;
-        }
-        throw BreezzeApiException(
-          code: result['code'] as String? ?? 'SOCIAL_AUTH_FAILED',
-          message: 'The identity provider could not complete the sign-in.',
-        );
-      }
-      throw const BreezzeApiException(
-        code: 'SOCIAL_AUTH_EXPIRED',
-        message: 'The browser sign-in timed out. You can try again.',
-      );
-    } on BreezzeApiException catch (e) {
-      if (attempt == _socialAttempt) state = AuthError(e.code);
+    } on GoogleSignInException catch (error) {
+      state = error.code.name == 'canceled'
+          ? const AuthSignedOut()
+          : const AuthError('SOCIAL_AUTH_FAILED');
+    } on supa.AuthException catch (error) {
+      state = AuthError(_authError(error));
     } catch (_) {
-      if (attempt == _socialAttempt) state = const AuthError('SOCIAL_AUTH_FAILED');
+      state = const AuthError('SOCIAL_AUTH_FAILED');
     }
   }
 
-  void cancelSocialLogin() {
-    ++_socialAttempt;
-    if (state is AuthSigningIn) state = const AuthSignedOut();
-  }
-
-  Future<void> beginMfaSetup(String password) async {
-    final current = state;
-    if (current is! AuthMfaRequired || !current.setupRequired) return;
-    final result = await _api.beginMfaSetup(password);
-    state = AuthMfaRequired(
-      userId: current.userId,
-      email: current.email,
-      setupRequired: true,
-      secret: result['secret'] as String?,
-      provisioningUri: result['provisioningUri'] as String?,
+  Future<void> _signInWithGoogle() async {
+    final isMobile = !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.android ||
+            defaultTargetPlatform == TargetPlatform.iOS);
+    if (!isMobile) {
+      await _client.auth.signInWithOAuth(
+        supa.OAuthProvider.google,
+        redirectTo: kIsWeb ? Uri.base.origin : _callback,
+      );
+      return;
+    }
+    if (_googleWebClientId.isEmpty ||
+        (defaultTargetPlatform == TargetPlatform.iOS &&
+            _googleIosClientId.isEmpty)) {
+      throw const supa.AuthException('GOOGLE_SETUP_REQUIRED');
+    }
+    _googleInitialization ??= GoogleSignIn.instance.initialize(
+      clientId: defaultTargetPlatform == TargetPlatform.iOS
+          ? _googleIosClientId
+          : null,
+      serverClientId: _googleWebClientId,
     );
-  }
-
-  Future<void> verifyMfaSetup(String code) async {
-    final current = state;
-    if (current is! AuthMfaRequired || !current.setupRequired) return;
-    final result = await _api.verifyMfaSetup(code);
-    final token = result['accessToken'];
-    if (token is! String || token.isEmpty) {
-      throw const BreezzeApiException(code: 'MFA_TOKEN_MISSING', message: 'MFA verification did not return a session token');
+    await _googleInitialization;
+    final account = await GoogleSignIn.instance.authenticate();
+    final identityToken = account.authentication.idToken;
+    if (identityToken == null) {
+      throw const supa.AuthException('GOOGLE_ID_TOKEN_MISSING');
     }
-    _api.accessToken = token;
-    final codes = (result['recoveryCodes'] as List<dynamic>? ?? const [])
-        .whereType<String>()
-        .toList(growable: false);
-    state = AuthMfaRecoveryCodes(
-      userId: current.userId,
-      email: current.email,
-      codes: codes,
+    final response = await _client.auth.signInWithIdToken(
+      provider: supa.OAuthProvider.google,
+      idToken: identityToken,
     );
+    _applySession(response.session);
   }
 
-  Future<void> verifyMfa(String code) async {
-    final current = state;
-    if (current is! AuthMfaRequired || current.setupRequired) return;
-    final result = await _api.verifyMfa(code);
-    final token = result['accessToken'];
-    if (token is! String || token.isEmpty) {
-      throw const BreezzeApiException(code: 'MFA_TOKEN_MISSING', message: 'MFA verification did not return a session token');
+  Future<void> _signInWithApple() async {
+    final native = !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.iOS ||
+            defaultTargetPlatform == TargetPlatform.macOS);
+    if (!native) {
+      await _client.auth.signInWithOAuth(
+        supa.OAuthProvider.apple,
+        redirectTo: kIsWeb ? Uri.base.origin : _callback,
+      );
+      return;
     }
-    _api.accessToken = token;
-    state = AuthSignedIn(userId: current.userId, email: current.email);
+    if (!await SignInWithApple.isAvailable()) {
+      throw const supa.AuthException('APPLE_UNAVAILABLE');
+    }
+    final rawNonce = _client.auth.generateRawNonce();
+    final nonceHash = sha256.convert(utf8.encode(rawNonce)).toString();
+    final credential = await SignInWithApple.getAppleIDCredential(
+      scopes: [
+        AppleIDAuthorizationScopes.email,
+        AppleIDAuthorizationScopes.fullName,
+      ],
+      nonce: nonceHash,
+    );
+    final identityToken = credential.identityToken;
+    if (identityToken == null) {
+      throw const supa.AuthException('APPLE_ID_TOKEN_MISSING');
+    }
+    final response = await _client.auth.signInWithIdToken(
+      provider: supa.OAuthProvider.apple,
+      idToken: identityToken,
+      nonce: rawNonce,
+    );
+    final givenName = credential.givenName?.trim() ?? '';
+    final familyName = credential.familyName?.trim() ?? '';
+    final fullName = [givenName, familyName]
+        .where((value) => value.isNotEmpty).join(' ');
+    if (fullName.isNotEmpty) {
+      await _client.auth.updateUser(supa.UserAttributes(
+        data: {'full_name': fullName},
+      ));
+    }
+    _applySession(response.session ?? _client.auth.currentSession);
   }
 
-  void completeMfaEnrollment() {
-    final current = state;
-    if (current is AuthMfaRecoveryCodes) {
-      state = AuthSignedIn(userId: current.userId, email: current.email);
+  String _authError(supa.AuthException error) {
+    final message = error.message.toLowerCase();
+    if (message.contains('google_setup_required')) return 'GOOGLE_SETUP_REQUIRED';
+    if (message.contains('apple_unavailable')) return 'APPLE_UNAVAILABLE';
+    if (message.contains('password') && message.contains('short')) {
+      return 'PASSWORD_TOO_SHORT';
     }
+    if (message.contains('invalid login') ||
+        message.contains('invalid credentials')) {
+      return 'INVALID_CREDENTIALS';
+    }
+    if (message.contains('rate limit')) return 'RATE_LIMITED';
+    return 'AUTH_FAILED';
   }
 
   Future<void> signOut() async {
-    ++_socialAttempt;
-    // Stop the global player while the access token is still valid so its
-    // server-authorized playback session is closed before account logout.
     try {
       await ref.read(playerControllerProvider.notifier).stop();
     } catch (_) {}
-    String? refreshToken;
     try {
-      refreshToken = await _secureStorage.read(key: _refreshTokenKey);
-    } catch (_) {}
-    if (refreshToken != null) {
-      try {
-        await _api.logout(refreshToken);
-      } catch (_) {
-        // Local logout must still complete when the network is unavailable.
-      }
+      await _client.auth.signOut();
+    } finally {
+      _api.accessToken = null;
+      state = const AuthSignedOut();
     }
-    _api.accessToken = null;
+  }
+
+  Future<void> signOutEverywhere() async {
     try {
-      await _secureStorage.delete(key: _refreshTokenKey);
+      await ref.read(playerControllerProvider.notifier).stop();
     } catch (_) {}
-    state = const AuthSignedOut();
+    try {
+      await _client.auth.signOut(scope: supa.SignOutScope.global);
+    } finally {
+      _api.accessToken = null;
+      state = const AuthSignedOut();
+    }
   }
 }
 

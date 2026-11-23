@@ -419,6 +419,16 @@ class BreezzeApi {
     await _post('/auth/logout-all', const <String, dynamic>{});
   }
 
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    await _post('/auth/password/change', {
+      'currentPassword': currentPassword,
+      'newPassword': newPassword,
+    });
+  }
+
   Future<Map<String, dynamic>> me() async => _get('/auth/me');
 
   // ---- account and sessions ----

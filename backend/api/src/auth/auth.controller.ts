@@ -40,6 +40,18 @@ export class LoginDto {
   password!: string;
 }
 
+export class ChangePasswordDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(128)
+  currentPassword!: string;
+
+  @IsString()
+  @MinLength(12)
+  @MaxLength(128)
+  newPassword!: string;
+}
+
 export class PasswordReauthDto {
   @IsString()
   @MinLength(1)
@@ -104,6 +116,18 @@ export class AuthController {
   async logoutAllDevices(@CurrentUser() userId: string) {
     await this.auth.revokeAllSessions(userId);
     return { revoked: true };
+  }
+
+  @Post('password/change')
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'private, no-store')
+  @UseGuards(JwtAuthGuard)
+  async changePassword(
+    @CurrentUser() userId: string,
+    @Body() dto: ChangePasswordDto,
+  ) {
+    await this.auth.changePassword(userId, dto.currentPassword, dto.newPassword);
+    return { changed: true, sessionsRevoked: true };
   }
 
   @Post('mfa/setup')

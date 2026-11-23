@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/auth/auth_session.dart';
 import '../authentication/auth_screen.dart';
 import 'account_sign_out.dart';
+import 'change_password_screen.dart';
 import '../../widgets/bz_brand_icons.dart';
 
 class AccountScreen extends ConsumerStatefulWidget {
@@ -340,6 +341,18 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                 FilledButton(
                   onPressed: _saving ? null : _saveProfile,
                   child: Text(_saving ? 'Saving…' : 'Save profile'),
+                ),
+                const SizedBox(height: 28),
+                Text('SECURITY', style: theme.textTheme.labelLarge),
+                const SizedBox(height: 8),
+                ListTile(
+                  leading: const BzSvgIcon(name: 'settings'),
+                  title: const Text('Change password'),
+                  subtitle: const Text('Sign out of all devices after changing'),
+                  trailing: const BzSvgIcon(name: 'chevron-right'),
+                  onTap: _saving ? null : () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const ChangePasswordScreen()),
+                  ),
                 ),
                 const SizedBox(height: 28),
                 Text('ACTIVE SESSIONS', style: theme.textTheme.labelLarge),

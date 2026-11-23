@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
+import * as argon2 from 'argon2';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma.service';
 
@@ -129,5 +130,32 @@ describeIntegration('Auth session PostgreSQL integration', () => {
     expect(otherTokens.every((row) => row.revokedAt === null)).toBe(true);
   });
 
+
+  it('changes a password transactionally and revokes only the owner sessions', async () => {
+    const owner = await createUser();
+    const other = await createUser();
+    const oldPassword = 'integration-old-password';
+    const newPassword = 'integration-new-password';
+    const oldHash = await argon2.hash(oldPassword, {
+      type: argon2.argon2id, memoryCost: 4096, timeCost: 1, parallelism: 1,
+    });
+    await prisma.user.update({ where: { id: owner.id }, data: { passwordHash: oldHash } });
+    await createRefreshToken(owner.id, randomUUID());
+    await createRefreshToken(owner.id, randomUUID());
+    await createRefreshToken(other.id, randomUUID());
+
+    await service.changePassword(owner.id, oldPassword, newPassword);
+
+    const changed = await prisma.user.findUniqueOrThrow({ where: { id: owner.id } });
+    expect(changed.passwordHash).not.toBe(oldHash);
+    expect(await argon2.verify(changed.passwordHash, oldPassword)).toBe(false);
+    expect(await argon2.verify(changed.passwordHash, newPassword)).toBe(true);
+    const ownerSessions = await prisma.refreshToken.findMany({ where: { userId: owner.id } });
+    const otherSessions = await prisma.refreshToken.findMany({ where: { userId: other.id } });
+    expect(ownerSessions).toHaveLength(2);
+    expect(ownerSessions.every((token) => token.revokedAt !== null)).toBe(true);
+    expect(otherSessions).toHaveLength(1);
+    expect(otherSessions.every((token) => token.revokedAt === null)).toBe(true);
+  });
 
 });

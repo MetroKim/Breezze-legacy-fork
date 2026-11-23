@@ -63,3 +63,10 @@ methods and headers before the origin-secret check, and decorates successful
 **and error** API responses with CORS headers for allowed origins, so upstream
 outages do not masquerade as missing browser CORS. The backend remains the
 authority for authentication and resource authorization.
+
+The deploy workflow now accepts the repository Actions variable
+`BREEZZE_WEB_ALLOWED_ORIGINS`, maps it to the Worker variable
+`WEB_ALLOWED_ORIGINS`, and verifies a successful browser preflight after
+deployment. The protected NestJS origin must independently set
+`CORS_ALLOWED_ORIGINS` to the corresponding trusted origins. Configure exact
+hostnames only; a Codespace forwarding URL may change between instances.

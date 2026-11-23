@@ -313,6 +313,8 @@ jobs:
         run: npm install --cache "$RUNNER_TEMP/npm-cache-api-worker" --no-audit --no-fund
       - name: Typecheck API Worker
         run: npm run check
+      - name: Test exact-origin browser CORS
+        run: npm test
 
   cloudflare_media:
     name: Cloudflare Worker typecheck

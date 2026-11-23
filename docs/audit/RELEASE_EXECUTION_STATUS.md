@@ -121,3 +121,8 @@ states, and automated/device evidence at the final commit.
 - Browser UI verification checks the Flutter painter inside shadow DOM, not
   only top-level canvas elements. The edge CORS failure in CI is tracked
   separately and must be tested against the deployed allowed origin.
+
+- Added Node-based edge CORS regression coverage (exact origin, denied origin,
+  unsafe method, error responses), executed in the API Worker CI job.
+- The guarded API deployment workflow now passes the configured browser
+  allowlist to Cloudflare and verifies the preflight on the deployed endpoint.

@@ -458,6 +458,9 @@ class PlayerController extends Notifier<PlayerState> {
   Future<void> resume() async {
     final engine = _engine;
     if (engine == null || state.playbackState != PlaybackState.paused) return;
+    final requestId = _requestGeneration;
+    bool isCurrentResume() =>
+        _isCurrentRequest(requestId) && identical(_engine, engine);
     final activeSource = _activeSource;
     final currentTrack = state.currentTrack;
     if (activeSource != null && activeSource.isExpired && currentTrack != null) {
@@ -477,35 +480,40 @@ class PlayerController extends Notifier<PlayerState> {
       try {
         await (_activeSessionClient ?? _sessionClient).resume(sessionId);
       } catch (_) {
-        await _closePlaybackSession();
+        if (isCurrentResume()) await _closePlaybackSession();
         return;
       }
     }
+    if (!isCurrentResume()) return;
     _machine.dispatch(PlayPressed());
     try {
       await _serializeEngineOperation(() async {
+        if (!isCurrentResume()) return;
         unawaited(engine.play().catchError(
           (Object error, StackTrace stackTrace) {
+            if (!isCurrentResume()) return;
             final currentTrackId = state.currentTrack?.id;
             if (currentTrackId != null) _scrobbles.onStop(currentTrackId);
             unawaited(_closePlaybackSession());
             _machine.dispatch(SourceResolutionFailed(
               'RESUME_FAILED',
-              requestId: _machine.activeRequestId,
+              requestId: requestId,
             ));
           },
         ));
       });
-      if (sessionId != null && state.playbackState == PlaybackState.playing) {
+      if (isCurrentResume() && sessionId != null &&
+          state.playbackState == PlaybackState.playing) {
         _startHeartbeatTimer();
       }
     } catch (_) {
+      if (!isCurrentResume()) return;
       await _closePlaybackSession();
       final currentTrackId = state.currentTrack?.id;
       if (currentTrackId != null) _scrobbles.onStop(currentTrackId);
       _machine.dispatch(SourceResolutionFailed(
         'RESUME_FAILED',
-        requestId: _machine.activeRequestId,
+        requestId: requestId,
       ));
     }
   }

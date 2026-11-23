@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 import 'package:breezze_api_client/breezze_api_client.dart';
 import 'package:breezze_design_system/breezze_design_system.dart';
 import 'package:material_ui/material_ui.dart';
@@ -29,10 +31,15 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
   @override
   void initState() {
     super.initState();
-    _refresh();
+    if (kIsWeb) {
+      _loading = false;
+    } else {
+      _refresh();
+    }
   }
 
   Future<void> _refresh() async {
+    if (kIsWeb) return;
     final auth = ref.read(authSessionProvider);
     if (auth is! AuthSignedIn) {
       if (!mounted) return;
@@ -183,6 +190,37 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
       _refresh();
     });
     final theme = Theme.of(context);
+    if (kIsWeb) {
+      // Native files and path_provider are unavailable in Flutter Web.
+      // Do not leave the browser on a spinner or attempt filesystem I/O.
+      return SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                BzBnoteMark(size: 60, color: theme.bzText2),
+                const SizedBox(height: 18),
+                Text(
+                  'Offline listening is not available in the browser',
+                  style: theme.textTheme.titleLarge,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Stream supported music online here. Use Breezze on a '
+                  'supported mobile or desktop device for authorized offline downloads.',
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(color: theme.bzText2),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     final progress = ref.watch(downloadProgressProvider);
     final jobStatuses = ref.watch(downloadJobStatusProvider);
     final downloadController = ref.read(downloadProgressProvider.notifier);

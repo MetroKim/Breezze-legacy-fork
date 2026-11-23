@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 import 'package:breezze_api_client/breezze_api_client.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../core/api/breezze_api.dart';
@@ -63,6 +65,7 @@ class DownloadsController extends StateNotifier<Map<String, double>> {
   }
 
   Future<void> _restoreJobs() async {
+    if (kIsWeb) return;
     try {
       final file = await _jobsFile();
       if (!await file.exists()) return;
@@ -132,6 +135,11 @@ class DownloadsController extends StateNotifier<Map<String, double>> {
   }
 
   Future<void> download(BzTrack track) async {
+    if (kIsWeb) {
+      // An API grant does not provide a browser-safe offline storage backend.
+      _setStatus(track.id, 'unsupported_web');
+      return;
+    }
     if (state.containsKey(track.id) || ['downloading', 'downloaded'].contains(ref.read(downloadJobStatusProvider)[track.id])) return;
     _tracks[track.id] = track;
     final cancellation = DownloadCancellation();

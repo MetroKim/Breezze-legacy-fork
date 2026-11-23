@@ -29,6 +29,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   List<RecentEntry> _recentlyPlayed = [];
   List<FavoriteTrack> _favorites = [];
   List<TrackInfo> _madeForYou = [];
+  List<TrackInfo> _fromFollowedArtists = [];
   Map<String, dynamic>? _replay;
   bool _loading = true;
   int _refreshVersion = 0;
@@ -48,39 +49,58 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final favorites = await ref.read(favoritesStoreProvider).load(ownerId: ownerId);
     Map<String, dynamic>? replay;
     var madeForYou = <TrackInfo>[];
+    var followedTracks = <TrackInfo>[];
     if (!mounted || version != _refreshVersion) return;
     if (auth is AuthSignedIn) {
       final api = ref.read(authSessionProvider.notifier).api;
       try {
         final sections = await api.homeFeed();
-        Map<String, dynamic>? personalized;
-        for (final section in sections) {
-          if (section['sectionType'] == 'personalized') {
-            personalized = section;
-            break;
+        // Keep the Home shelves distinct while resolving real canonical
+        // metadata. Each failed catalog item is omitted, never faked.
+        Future<List<TrackInfo>> resolveShelf(String sectionType) async {
+          Map<String, dynamic>? section;
+          for (final candidate in sections) {
+            if (candidate['sectionType'] == sectionType) {
+              section = candidate;
+              break;
+            }
           }
+          final ids = section?['trackIds'];
+          final trackIds = ids is List
+              ? ids.whereType<String>().where((id) => id.isNotEmpty)
+                  .take(12).toList(growable: false)
+              : <String>[];
+          final resolved = await Future.wait(trackIds.map((id) async {
+            try {
+              final song = await api.catalogSong(id);
+              final artistData = song['artist'];
+              final duration = song['duration'];
+              return TrackInfo(
+                id: song['id'] as String? ?? id,
+                title: song['title'] as String? ?? '',
+                artist: artistData is Map
+                    ? artistData['name'] as String? ?? ''
+                    : '',
+                artworkUrl: song['artworkUrl'] as String?,
+                duration: Duration(
+                  seconds: duration is num ? duration.toInt() : 0,
+                ),
+              );
+            } catch (_) {
+              return null;
+            }
+          }));
+          return resolved.whereType<TrackInfo>()
+              .where((track) => track.title?.isNotEmpty == true)
+              .toList(growable: false);
         }
-        final rawIds = personalized?['trackIds'];
-        final ids = rawIds is List
-            ? rawIds.whereType<String>().where((id) => id.isNotEmpty).take(12)
-            : const <String>[];
-        final resolved = await Future.wait(ids.map((id) async {
-          try {
-            final song = await api.catalogSong(id);
-            final artistData = song['artist'];
-            final duration = song['duration'];
-            return TrackInfo(
-              id: song['id'] as String? ?? id,
-              title: song['title'] as String? ?? '',
-              artist: artistData is Map
-                  ? artistData['name'] as String? ?? ''
-                  : '',
-              artworkUrl: song['artworkUrl'] as String?,
-              duration: Duration(
-                seconds: duration is num ? duration.toInt() : 0,
-              ),
-            );
-          } catch (_) {
+        final shelves = await Future.wait([
+          resolveShelf('followed_artists'),
+          resolveShelf('personalized'),
+        ]);
+        followedTracks = shelves[0];
+        madeForYou = shelves[1];
+      } catch (_) {
             // A track can become unavailable between ranking and display.
             return null;
           }
@@ -106,6 +126,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       _recentlyPlayed = recent;
       _favorites = favorites;
       _madeForYou = madeForYou;
+      _fromFollowedArtists = followedTracks;
       _replay = replay;
       _loading = false;
     });
@@ -287,6 +308,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           if (!_loading && shortcuts.isNotEmpty) ...[
             _ShortcutGrid(tracks: shortcuts.values.toList(), onPlay: _play),
             const SizedBox(height: 28),
+          ],
+          if (!_loading && _fromFollowedArtists.isNotEmpty) ...[
+            _Rail(
+              title: 'From Artists You Follow',
+              tracks: _fromFollowedArtists,
+              onPlay: _play,
+            ),
+            const SizedBox(height: 24),
           ],
           if (!_loading && _madeForYou.isNotEmpty) ...[
             _Rail(

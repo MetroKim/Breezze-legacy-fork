@@ -365,7 +365,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ),
             const SizedBox(height: 24),
           ],
-          if (!_loading && _recentlyPlayed.isEmpty && _favorites.isEmpty)
+          if (!_loading && _recentlyPlayed.isEmpty && _favorites.isEmpty &&
+              _madeForYou.isEmpty && _fromFollowedArtists.isEmpty)
             _FirstRunCard(
               onSearch: () => ref.read(homeTabHintProvider.notifier).state = MainTab.search.index,
             ),

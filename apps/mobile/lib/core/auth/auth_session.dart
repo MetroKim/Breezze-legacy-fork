@@ -227,9 +227,17 @@ class AuthSessionController extends Notifier<AuthState> {
     if (identityToken == null) {
       throw const supa.AuthException('GOOGLE_ID_TOKEN_MISSING');
     }
+    // google_sign_in 7 separates authentication (ID token) from
+    // authorization (access token). Supabase requires both for Google.
+    // Request only the standard identity scopes; no provider media access.
+    const identityScopes = <String>['email', 'profile'];
+    final authorization = await account.authorizationClient
+            .authorizationForScopes(identityScopes) ??
+        await account.authorizationClient.authorizeScopes(identityScopes);
     final response = await _client.auth.signInWithIdToken(
       provider: supa.OAuthProvider.google,
       idToken: identityToken,
+      accessToken: authorization.accessToken,
     );
     _applySession(response.session);
   }

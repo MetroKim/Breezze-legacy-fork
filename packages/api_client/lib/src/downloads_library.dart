@@ -123,7 +123,7 @@ class DownloadsLibrary {
           await partialFile.delete();
         }
         if (validVersion) {
-          await versionFile.writeAsString(assetVersion!);
+          await versionFile.writeAsString(assetVersion);
         } else if (!sameVersion && await versionFile.exists()) {
           await versionFile.delete();
         }

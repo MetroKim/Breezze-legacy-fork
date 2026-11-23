@@ -2,6 +2,6 @@ name = "breezze-media"
 main = "src/index.ts"
 compatibility_date = "2026-11-21"
 
-[[r2_buckets]]
-binding = "MEDIA_BUCKET"
-bucket_name = "breezze-media"
+# No R2 binding: private, rights-cleared assets live in Supabase Storage.
+# Set MEDIA_SIGNING_KEY, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_URL and
+# optionally SUPABASE_MEDIA_BUCKET as Worker secrets/variables.

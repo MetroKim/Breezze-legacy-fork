@@ -87,7 +87,12 @@ class AuthSessionController extends Notifier<AuthState> {
 
   /// Auth0 Universal Login is the primary account flow when selected.
   /// Existing Breezze device sessions remain valid during migration.
-  bool get usesAuth0Auth => _authMode == 'auth0';
+  bool get usesAuth0Auth =>
+      _authMode == 'auth0' || _authMode == 'auth0_embedded';
+
+  /// Auth0 database email/password sign-in uses the existing Breezze
+  /// Flutter screen. Enabled only after the API/tenant have been verified.
+  bool get usesAuth0Embedded => _authMode == 'auth0_embedded';
   late final SupabaseAuthTransport _supabase = SupabaseAuthTransport(
     projectUrl: _supabaseUrl,
     publishableKey: _supabasePublishableKey,
@@ -186,12 +191,18 @@ class AuthSessionController extends Notifier<AuthState> {
     String password, {
     String? displayName,
   }) async {
-    if (usesAuth0Auth) {
+    if (usesAuth0Auth && !usesAuth0Embedded) {
       await socialLogin('auth0');
       return;
     }
     state = const AuthSigningIn();
     try {
+      if (usesAuth0Embedded) {
+        await _api.registerAuth0Embedded(email, password,
+            displayName: displayName);
+        state = const AuthError('EMAIL_VERIFICATION_REQUIRED');
+        return;
+      }
       if (usesSupabaseAuth) {
         final token = await _supabase.signUp(
           email, password, displayName: displayName,
@@ -216,12 +227,16 @@ class AuthSessionController extends Notifier<AuthState> {
   }
 
   Future<void> login(String email, String password) async {
-    if (usesAuth0Auth) {
+    if (usesAuth0Auth && !usesAuth0Embedded) {
       await socialLogin('auth0');
       return;
     }
     state = const AuthSigningIn();
     try {
+      if (usesAuth0Embedded) {
+        await _persistSession(await _api.loginAuth0Embedded(email, password));
+        return;
+      }
       if (usesSupabaseAuth) {
         final token = await _supabase.signIn(email, password);
         await _persistSession(await _api.exchangeSupabaseSession(token));

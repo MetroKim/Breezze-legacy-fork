@@ -74,6 +74,7 @@ class BreezzeApi {
         path != '/auth/refresh' &&
         path != '/auth/login' &&
         path != '/auth/register' &&
+        !path.startsWith('/auth/auth0/') &&
         path != '/auth/logout' &&
         !path.startsWith('/auth/social/') &&
         !path.startsWith('/auth/mfa/') &&
@@ -274,6 +275,35 @@ class BreezzeApi {
       if (displayName != null) 'displayName': displayName,
     });
     return AuthResponse.fromJson(data);
+  }
+
+  /// Breezze-rendered account fields, forwarded only to our trusted API.
+  /// Auth0's Native client secret is never embedded into Flutter.
+  Future<AuthResponse> loginAuth0Embedded(String email, String password) async {
+    final result = await _post('/auth/auth0/login', {
+      'email': email,
+      'password': password,
+    });
+    return AuthResponse.fromJson(result);
+  }
+
+  Future<void> registerAuth0Embedded(String email, String password, {
+    String? displayName,
+  }) async {
+    await _post('/auth/auth0/register', {
+      'email': email,
+      'password': password,
+      if (displayName != null && displayName.trim().isNotEmpty)
+        'displayName': displayName.trim(),
+    });
+  }
+
+  Future<void> sendAuth0PasswordReset(String email) async {
+    await _post('/auth/auth0/password/reset', {'email': email});
+  }
+
+  Future<void> linkAuth0Embedded(String email, String password) async {
+    await _post('/auth/auth0/link', {'email': email, 'password': password});
   }
 
   /// Universal system-browser OAuth pairing: same backend on Android,

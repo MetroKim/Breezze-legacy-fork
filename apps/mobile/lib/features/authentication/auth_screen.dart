@@ -34,7 +34,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   @override
   void initState() {
     super.initState();
-    _registerMode = ref.read(authSessionProvider.notifier).usesAuth0Auth
+    final mode = ref.read(authSessionProvider.notifier);
+    _registerMode = mode.usesAuth0Auth && !mode.usesAuth0Embedded
         ? false
         : widget.startInRegisterMode;
     _socialProviders = _prepareSocialFlows();
@@ -45,7 +46,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     // is the configured auth authority. Provider OAuth can be enabled only
     // after it is configured for the selected Supabase project.
     final session = ref.read(authSessionProvider.notifier);
-    if (session.usesSupabaseAuth) {
+    if (session.usesSupabaseAuth || session.usesAuth0Embedded) {
       return <String, dynamic>{};
     }
     if (session.usesAuth0Auth) {
@@ -126,6 +127,13 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
             ? null
             : _displayName.text.trim(),
       );
+      if (controller.usesAuth0Embedded && mounted &&
+          ref.read(authSessionProvider) is AuthError &&
+          (ref.read(authSessionProvider) as AuthError).code ==
+              'EMAIL_VERIFICATION_REQUIRED') {
+        _password.clear();
+        setState(() => _registerMode = false);
+      }
     } else {
       await controller.login(_email.text.trim(), _password.text);
     }
@@ -314,7 +322,10 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     required String? error,
   }) {
     final session = ref.read(authSessionProvider.notifier);
-    if (session.usesAuth0Auth && !_legacyFallback) {
+    // Embedded Auth0 retains Breezze's own design-system form and branding.
+    // Hosted Auth0 remains an opt-in fallback, never the embedded default.
+    if (session.usesAuth0Auth && !session.usesAuth0Embedded &&
+        !_legacyFallback) {
       return _auth0LoginPanel(context, busy: busy, error: error);
     }
     final theme = Theme.of(context);
@@ -415,12 +426,12 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                   );
                 },
               ),
-              if (session.usesAuth0Auth)
+              if (session.usesAuth0Auth && _legacyFallback)
                 TextButton(
                   onPressed: busy ? null : () => setState(() {
                     _legacyFallback = false;
                   }),
-                  child: const Text('Back to Auth0 sign-in'),
+                  child: const Text('Back to Breezze sign-in'),
                 ),
               const SizedBox(height: 24),
               Row(
@@ -428,7 +439,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                   Expanded(child: Divider(color: theme.bzSeparator)),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 14),
-                    child: Text(session.usesAuth0Auth ? 'Existing Breezze account' : 'or use email',
+                    child: Text(session.usesAuth0Auth && _legacyFallback
+                          ? 'Existing Breezze account' : 'or use email',
                         style: TextStyle(color: theme.bzText2, fontSize: 12)),
                   ),
                   Expanded(child: Divider(color: theme.bzSeparator)),
@@ -483,7 +495,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                 Semantics(
                   liveRegion: true,
                   child: Text(_errorText(error), style: TextStyle(
-                    color: theme.bzError, fontSize: 13,
+                    color: error == 'EMAIL_VERIFICATION_REQUIRED'
+                        ? theme.bzText1 : theme.bzError, fontSize: 13,
                   )),
                 ),
               ],
@@ -494,7 +507,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                 onPressed: _submit,
               ),
               const SizedBox(height: 22),
-              if (!session.usesAuth0Auth)
+              if (!session.usesAuth0Auth ||
+                  (session.usesAuth0Embedded && !_legacyFallback))
               Center(
                 child: TextButton(
                   onPressed: busy ? null : () => setState(
@@ -509,6 +523,51 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                   ),
                 ),
               ),
+              if (session.usesAuth0Embedded && !_legacyFallback) ...[
+                if (!_registerMode)
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: busy ? null : () async {
+                        final email = _email.text.trim();
+                        if (email.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Enter your email address first.'),
+                            ),
+                          );
+                          return;
+                        }
+                        try {
+                          await session.api.sendAuth0PasswordReset(email);
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'If your account exists, check your email for the reset link.',
+                              ),
+                            ),
+                          );
+                        } catch (_) {
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Password reset is temporarily unavailable.'),
+                            ),
+                          );
+                        }
+                      },
+                      child: const Text('Forgot password?'),
+                    ),
+                  ),
+                TextButton(
+                  onPressed: busy ? null : () => setState(() {
+                    _legacyFallback = true;
+                    _registerMode = false;
+                  }),
+                  child: const Text('Already have a Breezze account? Migrate it'),
+                ),
+              ],
               const SizedBox(height: 12),
               Text(
                 'By continuing, you agree to our Terms and Privacy Policy.',
@@ -852,6 +911,15 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
         return 'Secure sign-in did not finish. Please retry or use email.';
       case 'AUTH0_DOMAIN_NOT_CONFIGURED':
         return 'Auth0 is not configured for Breezze yet.';
+      case 'AUTH0_EMBEDDED_NOT_CONFIGURED':
+        return 'Breezze sign-in is not enabled yet.';
+      case 'AUTH0_EMBEDDED_UNAVAILABLE':
+      case 'AUTH0_ID_TOKEN_MISSING':
+        return 'The account service is unavailable. Please retry shortly.';
+      case 'AUTH0_EMBEDDED_MFA_REQUIRED':
+        return 'This account needs additional verification. Contact support.';
+      case 'AUTH0_SIGNUP_REJECTED':
+        return 'Check your account details and password requirements.';
       default:
         return 'Something went wrong. Try again.';
     }

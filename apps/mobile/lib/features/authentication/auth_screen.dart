@@ -410,30 +410,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     }
   }
 
-  Widget _field({
-    required TextEditingController controller,
-    required String hint,
-    required IconData icon,
-    bool obscure = false,
-    TextInputType? keyboard,
-  }) {
-    final theme = Theme.of(context);
-    return TextField(
-      controller: controller,
-      obscureText: obscure,
-      keyboardType: keyboard,
-      decoration: InputDecoration(
-        hintText: hint,
-        prefixIcon: Icon(icon),
-        filled: true,
-        fillColor: theme.bzSurface1,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(BzRadius.input),
-          borderSide: BorderSide(color: theme.bzSeparator),
-        ),
-      ),
-    );
-  }
+
 }
 
 class _SubmitButton extends StatelessWidget {

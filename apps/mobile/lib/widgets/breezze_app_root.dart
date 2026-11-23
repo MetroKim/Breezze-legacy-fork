@@ -1,5 +1,7 @@
 import 'dart:async';
 import '../../app/appearance_controller.dart';
+import '../../app/language_controller.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -55,6 +57,7 @@ class _BreezzeAppRootState extends ConsumerState<BreezzeAppRoot> with WidgetsBin
         _showOnboarding = false;
         _shellKey = GlobalKey();
         ref.invalidate(onboardingProvider);
+        ref.invalidate(appLanguageProvider);
         ref.read(outboxTerritoryProvider.notifier).state = 'WW';
       }
       if (prev is AuthSignedIn && before != after) {
@@ -135,6 +138,13 @@ class _BreezzeAppRootState extends ConsumerState<BreezzeAppRoot> with WidgetsBin
       title: 'Breezze',
       debugShowCheckedModeBanner: false,
       themeMode: ref.watch(appearanceProvider).valueOrNull ?? ThemeMode.system,
+      locale: Locale(ref.watch(appLanguageProvider).valueOrNull ?? 'en'),
+      supportedLocales: breezzeSupportedLocales,
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       theme: bzLightTheme(),
       darkTheme: bzDarkTheme(),
       home: Builder(

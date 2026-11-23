@@ -30,6 +30,13 @@ void main() {
       expect(value.quality, 'standard');
     });
 
+    test('migrates unsupported Hi-Res streaming to the safe standard', () {
+      final value = DownloadPreferences.fromJson({
+        'streamingQuality': 'HI_RES',
+      });
+      expect(value.streamingQuality, 'AAC_256');
+    });
+
     test('accepts supported storage and lossless quality', () {
       final value = DownloadPreferences.fromJson({
         'minimumFreeSpaceGb': 10,

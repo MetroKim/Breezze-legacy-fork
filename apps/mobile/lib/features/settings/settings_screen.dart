@@ -183,7 +183,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     DropdownMenuItem(value: 'AAC_128', child: Text('Standard')),
                     DropdownMenuItem(value: 'AAC_256', child: Text('High')),
                     DropdownMenuItem(value: 'LOSSLESS', child: Text('Lossless')),
-                    DropdownMenuItem(value: 'HI_RES', child: Text('Hi-Res')),
                   ],
                   onChanged: (value) {
                     if (value != null) {

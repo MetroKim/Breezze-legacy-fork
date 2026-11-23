@@ -558,7 +558,15 @@ class PlayerController extends Notifier<PlayerState> {
   }
 
   Future<bool> _tryDeezerPreview(TrackInfo track, int requestId) async {
-    if (!isYouTubeSongId(track.id) || !_isCurrentRequest(requestId)) return false;
+    if (!_isCurrentRequest(requestId)) return false;
+    if (isDeezerTrackId(track.id)) {
+      await _playDeezerPreview(TrackInfo(
+        id: 'bz:deezer_preview:${track.id.split(':').last}',
+        title: track.title, artist: track.artist, artworkUrl: track.artworkUrl,
+      ));
+      return true;
+    }
+    if (!isYouTubeSongId(track.id)) return false;
     final title = track.title;
     final artist = track.artist;
     if (title == null || artist == null || title.isEmpty || artist.isEmpty) return false;
@@ -809,7 +817,7 @@ class PlayerController extends Notifier<PlayerState> {
       // Keep the legacy reporter only for local/offline media, which has no
       // server playback session.
       if (source.sessionId == null && !info.id.startsWith('device:') &&
-          !isDeezerPreview(info.id) && !isYouTubeSongId(info.id)) {
+          !isDeezerPreview(info.id) && !isExternalRecordingId(info.id)) {
         unawaited(
           ref.read(playHistoryReporterProvider)(info).catchError((_) {}),
         );

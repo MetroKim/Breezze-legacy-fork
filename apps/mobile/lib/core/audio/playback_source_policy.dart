@@ -5,10 +5,15 @@ final _youtubeSongId = RegExp(r'^bz:youtube_music:[A-Za-z0-9_-]{11}$');
 
 bool isYouTubeSongId(String id) => _youtubeSongId.hasMatch(id);
 
+final _deezerTrack = RegExp(r'^bz:deezer:[0-9]{1,20}$');
+bool isDeezerTrackId(String id) => _deezerTrack.hasMatch(id);
+
+bool isExternalRecordingId(String id) => isYouTubeSongId(id) || isDeezerTrackId(id);
+
 /// A queued song still needs a source from the session resolver.
 bool isMetadataOnlyTrackId(String id) =>
     id.startsWith('bzv:') ||
-    (id.startsWith('bz:') && !id.startsWith('bz:jamendo:') && !isYouTubeSongId(id) && !isDeezerPreview(id));
+    (id.startsWith('bz:') && !id.startsWith('bz:jamendo:') && !isExternalRecordingId(id) && !isDeezerPreview(id));
 
 bool canQueueTrackId(String id) => id.trim().isNotEmpty && !isMetadataOnlyTrackId(id);
 

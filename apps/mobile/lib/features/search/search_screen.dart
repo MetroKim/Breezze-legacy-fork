@@ -465,17 +465,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       );
       return;
     }
-    if (track.id.startsWith('bz:deezer:')) {
-      final id = track.id.replaceFirst('bz:deezer:', 'bz:deezer_preview:');
-      final preview = TrackInfo(id: id, title: track.title, artist: track.artist,
-          artworkUrl: track.artworkUrl);
-      ref.read(playerControllerProvider.notifier).playTrack(
-        trackId: id, queue: [preview], startIndex: 0, origin: 'search',
-        sourceContext: 'Deezer preview',
-      );
-      Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const NowPlayingScreen()));
-      return;
-    }
     if (isMetadataOnlyTrackId(track.id)) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -717,7 +706,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                                           )
                                         : Text(
                                             track.id.startsWith('bz:deezer:')
-                                                ? '${track.artist} · ${track.hasPreview ? 'Deezer preview' : 'Deezer catalog'}'
+                                                ? '${track.artist} · ${track.hasPreview ? 'Deezer · preview available' : 'Deezer catalog'}'
                                                 : track.id.startsWith('bz:youtube_music:')
                                                         ? '${track.artist} · YouTube Music'
                                                         : track.id.startsWith('bz:jamendo:')
@@ -736,7 +725,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                                           IconButton(
                                             tooltip: track.id.startsWith('bzv:')
                                                 ? 'Watch music video'
-                                                : track.hasPreview ? 'Play preview' : 'Play',
+                                                : 'Play',
                                             icon: const BzSvgIcon(name: 'play', size: 20),
                                             onPressed: () => _play(track),
                                           ),

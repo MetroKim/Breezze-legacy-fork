@@ -5,7 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../core/auth/auth_session.dart';
-import '../../core/api/breezze_api.dart';
 import '../../widgets/bz_brand_icons.dart';
 
 /// Auth screen — login + register in one premium glass card, wired to
@@ -21,60 +20,10 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   final _email = TextEditingController();
   final _password = TextEditingController();
   final _displayName = TextEditingController();
-  final _mfaCode = TextEditingController();
   bool _registerMode = false;
   bool _revealPassword = false;
-  late Future<Map<String, dynamic>> _socialProviders;
-  bool _mfaBusy = false;
-  String? _mfaError;
-
-  @override
-  void initState() {
-    super.initState();
-    _socialProviders = _prepareSocialFlows();
-  }
-
-  Future<Map<String, dynamic>> _prepareSocialFlows() async {
-    try {
-      final api = ref.read(authSessionProvider.notifier).api;
-      final flags = await api.socialProviders()
-          .timeout(const Duration(seconds: 10));
-      final result = Map<String, dynamic>.from(flags);
-      for (final provider in const ['apple', 'google']) {
-        if (result[provider] == true) {
-          try {
-            result['${provider}Flow'] = await api.startSocialLogin(provider)
-                .timeout(const Duration(seconds: 10));
-          } catch (_) {
-            // A failed preflight disables only that button; email and the
-            // other provider remain available.
-          }
-        }
-      }
-      return result;
-    } catch (_) {
-      return <String, dynamic>{};
-    }
-  }
-
-  bool _freshFlow(Object? raw) {
-    if (raw is! Map || raw['expiresAt'] is! String) return false;
-    final until = DateTime.tryParse(raw['expiresAt'] as String);
-    return until != null &&
-        until.isAfter(DateTime.now().toUtc().add(const Duration(seconds: 15)));
-  }
-
-  Future<void> _signInWith(String provider, Map flow) async {
-    if (_freshFlow(flow)) {
-      await ref.read(authSessionProvider.notifier).socialLogin(
-        provider,
-        preparedFlow: Map<String, dynamic>.from(flow),
-      );
-    }
-    // Refresh one-time flows after cancellation, expiry or a failed attempt.
-    if (mounted && ref.read(authSessionProvider) is! AuthSignedIn) {
-      setState(() => _socialProviders = _prepareSocialFlows());
-    }
+  Future<void> _signInWith(String provider) async {
+    await ref.read(authSessionProvider.notifier).socialLogin(provider);
   }
 
   @override
@@ -82,7 +31,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     _email.dispose();
     _password.dispose();
     _displayName.dispose();
-    _mfaCode.dispose();
     super.dispose();
   }
 
@@ -106,11 +54,36 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     final theme = Theme.of(context);
     final auth = ref.watch(authSessionProvider);
     final busy = auth is AuthSigningIn;
-    final socialBusy = auth is AuthSigningIn && auth.social;
     final error = auth is AuthError ? auth.code : null;
 
-    if (auth is AuthMfaRequired) return _buildMfaRequired(context, auth);
-    if (auth is AuthMfaRecoveryCodes) return _buildRecoveryCodes(context, auth);
+    if (auth is AuthEmailConfirmationRequired) {
+      return Scaffold(
+        backgroundColor: theme.bzBackground,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                BzRibbonLogo(width: 160, color: theme.bzText1),
+                const SizedBox(height: 24),
+                Text('Check your email', style: theme.textTheme.headlineMedium),
+                const SizedBox(height: 12),
+                Text('We sent a confirmation link to ${auth.email}. '
+                    'Confirm your address, then sign in to Breezze.',
+                    textAlign: TextAlign.center),
+                const SizedBox(height: 24),
+                TextButton(
+                  onPressed: () => ref.read(authSessionProvider.notifier)
+                      .resetToSignedOut(),
+                  child: const Text('Back to sign in'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
 
     final desktop = MediaQuery.sizeOf(context).width >= 980;
     return Scaffold(
@@ -159,7 +132,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
 
   Widget _loginPanel(BuildContext context, {
     required bool busy,
-    required bool socialBusy,
     required String? error,
   }) {
     final theme = Theme.of(context);
@@ -207,57 +179,18 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                 child: const Text('Browse music'),
               ),
               const SizedBox(height: 12),
-              FutureBuilder<Map<String, dynamic>>(
-                future: _socialProviders,
-                builder: (context, snapshot) {
-                  final providers = snapshot.data ?? const <String, dynamic>{};
-                  final googleFlow = providers['googleFlow'];
-                  final appleFlow = providers['appleFlow'];
-                  final googleReady = _freshFlow(googleFlow);
-                  final appleReady = _freshFlow(appleFlow);
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _socialButton(
-                        label: 'Continue with Apple',
-                        isApple: true,
-                        enabled: appleReady && !busy,
-                        onPressed: () => _signInWith('apple', appleFlow as Map),
-                      ),
-                      const SizedBox(height: 12),
-                      _socialButton(
-                        label: 'Continue with Google',
-                        isApple: false,
-                        enabled: googleReady && !busy,
-                        onPressed: () => _signInWith('google', googleFlow as Map),
-                      ),
-                      if (!googleReady || !appleReady) ...[
-                        const SizedBox(height: 12),
-                        Text(
-                          snapshot.connectionState == ConnectionState.waiting
-                              ? 'Preparing secure sign-in providers…'
-                              : (providers['google'] == true ||
-                                  providers['apple'] == true)
-                                ? 'Provider sign-in is unavailable or expired. '
-                                  'You can refresh it, or continue with email.'
-                                : 'Continue with your email address.',
-                          style: TextStyle(
-                            color: theme.bzText2,
-                            fontSize: 12,
-                            height: 1.35,
-                          ),
-                        ),
-                        if (snapshot.connectionState != ConnectionState.waiting)
-                          TextButton(
-                            onPressed: busy ? null : () => setState(() {
-                              _socialProviders = _prepareSocialFlows();
-                            }),
-                            child: const Text('Refresh social sign-in'),
-                          ),
-                      ],
-                    ],
-                  );
-                },
+              _socialButton(
+                label: 'Continue with Apple',
+                isApple: true,
+                enabled: !busy,
+                onPressed: () => _signInWith('apple'),
+              ),
+              const SizedBox(height: 12),
+              _socialButton(
+                label: 'Continue with Google',
+                isApple: false,
+                enabled: !busy,
+                onPressed: () => _signInWith('google'),
               ),
               const SizedBox(height: 24),
               Row(
@@ -355,14 +288,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                   color: theme.bzText2,
                 ),
               ),
-              if (socialBusy) ...[
-                const SizedBox(height: 16),
-                TextButton(
-                  onPressed: () => ref.read(authSessionProvider.notifier)
-                      .cancelSocialLogin(),
-                  child: const Text('Cancel sign-in'),
-                ),
-              ],
             ],
           ),
         ),
@@ -463,219 +388,26 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   }
 
 
-  Future<void> _runMfa(Future<void> Function() action) async {
-    setState(() {
-      _mfaBusy = true;
-      _mfaError = null;
-    });
-    try {
-      await action();
-    } on BreezzeApiException catch (error) {
-      if (mounted) setState(() => _mfaError = error.code);
-    } catch (_) {
-      if (mounted) setState(() => _mfaError = 'NETWORK_ERROR');
-    } finally {
-      if (mounted) setState(() => _mfaBusy = false);
-    }
-  }
-
-  Widget _buildMfaRequired(BuildContext context, AuthMfaRequired auth) {
-    final theme = Theme.of(context);
-    final controller = ref.read(authSessionProvider.notifier);
-    final setupStarted = auth.provisioningUri != null && auth.secret != null;
-    return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 460),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  BzRibbonLogo(width: 104, color: theme.bzText1),
-                  const SizedBox(height: 20),
-                  Text(
-                    auth.setupRequired ? 'Secure your administrator account' : 'Two-factor verification',
-                    style: theme.textTheme.headlineMedium,
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    auth.setupRequired
-                        ? 'Set up an authenticator before accessing administrator tools.'
-                        : 'Enter the current code from your authenticator app, or use a recovery code.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: theme.bzText2),
-                  ),
-                  const SizedBox(height: 24),
-                  BzGlassContainer(
-                    radius: BzRadius.card,
-                    blur: 24,
-                    child: Padding(
-                      padding: const EdgeInsets.all(22),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          if (auth.setupRequired && !setupStarted) ...[
-                            Text('Confirm your password to begin MFA enrollment.',
-                                style: TextStyle(color: theme.bzText2)),
-                            const SizedBox(height: 12),
-                            _field(
-                              controller: _password,
-                              hint: 'Current password',
-                              icon: Icons.lock_outline,
-                              obscure: true,
-                            ),
-                            const SizedBox(height: 16),
-                            _SubmitButton(
-                              label: 'Set up authenticator',
-                              busy: _mfaBusy,
-                              onPressed: () => _runMfa(
-                                () => controller.beginMfaSetup(_password.text),
-                              ),
-                            ),
-                          ] else ...[
-                            if (setupStarted) ...[
-                              Text('Add this account to your authenticator app.',
-                                  style: TextStyle(color: theme.bzText2)),
-                              const SizedBox(height: 10),
-                              SelectableText(auth.secret!,
-                                  style: TextStyle(
-                                    color: theme.bzText1,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: 1.2,
-                                  )),
-                              const SizedBox(height: 8),
-                              SelectableText(auth.provisioningUri!,
-                                  style: TextStyle(fontSize: 11, color: theme.bzText2)),
-                              const SizedBox(height: 16),
-                            ],
-                            _field(
-                              controller: _mfaCode,
-                              hint: '6-digit code or recovery code',
-                              icon: Icons.verified_user_outlined,
-                              keyboard: TextInputType.text,
-                            ),
-                            const SizedBox(height: 16),
-                            _SubmitButton(
-                              label: auth.setupRequired ? 'Verify and enable MFA' : 'Verify and continue',
-                              busy: _mfaBusy,
-                              onPressed: () => _runMfa(
-                                () => auth.setupRequired
-                                    ? controller.verifyMfaSetup(_mfaCode.text.trim())
-                                    : controller.verifyMfa(_mfaCode.text.trim()),
-                              ),
-                            ),
-                          ],
-                          if (_mfaError != null) ...[
-                            const SizedBox(height: 12),
-                            Text(
-                              _mfaError == 'MFA_CODE_REPLAYED'
-                                  ? 'That code has already been used. Wait for the next code.'
-                                  : _mfaError == 'INVALID_CREDENTIALS'
-                                      ? 'Password confirmation failed.'
-                                      : 'Verification failed. Check the code and try again.',
-                              style: TextStyle(color: theme.bzError),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextButton(
-                    onPressed: _mfaBusy
-                        ? null
-                        : () => controller.signOut(),
-                    child: Text('Sign out', style: TextStyle(color: theme.bzText2)),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRecoveryCodes(BuildContext context, AuthMfaRecoveryCodes auth) {
-    final theme = Theme.of(context);
-    final controller = ref.read(authSessionProvider.notifier);
-    return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 460),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  BzRibbonLogo(width: 104, color: theme.bzText1),
-                  const SizedBox(height: 20),
-                  Text('Save your recovery codes',
-                      style: theme.textTheme.headlineMedium,
-                      textAlign: TextAlign.center),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Each code works once if you lose access to your authenticator. They will not be shown again.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: theme.bzText2),
-                  ),
-                  const SizedBox(height: 20),
-                  BzGlassContainer(
-                    radius: BzRadius.card,
-                    blur: 24,
-                    child: Padding(
-                      padding: const EdgeInsets.all(22),
-                      child: SelectableText(
-                        auth.codes.join('\n'),
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: theme.bzText1,
-                          fontWeight: FontWeight.w700,
-                          height: 1.8,
-                          letterSpacing: 1.1,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  _SubmitButton(
-                    label: 'I have saved my codes',
-                    busy: false,
-                    onPressed: controller.completeMfaEnrollment,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   String _errorText(String code) {
     switch (code) {
-      case 'EMAIL_TAKEN':
-        return 'That email is already registered.';
       case 'INVALID_CREDENTIALS':
         return 'Wrong email or password.';
+      case 'PASSWORD_TOO_SHORT':
+        return 'Choose a longer password.';
+      case 'GOOGLE_SETUP_REQUIRED':
+        return 'Google Sign-In needs its Google Cloud client IDs configured.';
+      case 'APPLE_UNAVAILABLE':
+        return 'Apple Sign-In is not supported on this device.';
+      case 'RATE_LIMITED':
+        return 'Too many attempts. Try again later.';
       case 'NETWORK_ERROR':
-        return 'Cannot reach Breezze. Check your connection.';
-      case 'SOCIAL_ACCOUNT_LINK_REQUIRED':
-        return 'An account already uses this email. Sign in with email first.';
-      case 'SOCIAL_AUTH_EXPIRED':
-        return 'The browser sign-in expired. Try again.';
-      case 'SOCIAL_PROVIDER_NOT_CONFIGURED':
-        return 'This sign-in provider is not configured yet.';
+        return 'Cannot reach Supabase Auth. Check your connection.';
+      case 'AUTH_FAILED':
+        return 'Sign-in failed. Check your details or try another method.';
       case 'SOCIAL_AUTH_FAILED':
-        return 'Secure sign-in did not finish. Please retry or use email.';
+        return 'Secure sign-in did not finish. Please retry.';
       default:
-        return 'Something went wrong. Try again.';
+        return 'Something went wrong. Please try again.';
     }
   }
 

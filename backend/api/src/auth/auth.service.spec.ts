@@ -150,30 +150,13 @@ describe('AuthService refresh-token rotation', () => {
       type: argon2.argon2id, memoryCost: 4096, timeCost: 1, parallelism: 1,
     });
     prisma.user.findUnique.mockResolvedValue({ passwordHash: oldHash });
-
     await service.changePassword('user-1', 'old-password-strong', 'new-password-strong');
-
     expect(prisma.user.updateMany).toHaveBeenCalledWith({
       where: { id: 'user-1', passwordHash: oldHash },
       data: { passwordHash: expect.any(String) },
     });
     const storedHash = prisma.user.updateMany.mock.calls[0][0].data.passwordHash;
-    expect(storedHash).toContain('$argon2id
-    prisma.refreshToken.findUnique.mockResolvedValue({
-      familyId: 'family-1',
-      userId: 'user-1',
-    });
-
-    await service.logout('logout-refresh-token');
-
-    expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
-      where: { familyId: 'family-1', userId: 'user-1', revokedAt: null },
-      data: { revokedAt: expect.any(Date) },
-    });
-  });
-
-});
-);
+    expect(storedHash).toContain('$argon2id$');
     expect(await argon2.verify(storedHash, 'new-password-strong')).toBe(true);
     expect(transactionRefreshToken.updateMany).toHaveBeenCalledWith({
       where: { userId: 'user-1', revokedAt: null },
@@ -181,19 +164,18 @@ describe('AuthService refresh-token rotation', () => {
     });
   });
 
-  it('rejects an incorrect current password without changing the user or sessions', async () => {
+  it('rejects an incorrect current password without changing the account', async () => {
     const oldHash = await argon2.hash('old-password-strong', {
       type: argon2.argon2id, memoryCost: 4096, timeCost: 1, parallelism: 1,
     });
     prisma.user.findUnique.mockResolvedValue({ passwordHash: oldHash });
-
     await expect(service.changePassword('user-1', 'bad-password', 'new-password-strong'))
       .rejects.toBeInstanceOf(UnauthorizedException);
     expect(prisma.user.updateMany).not.toHaveBeenCalled();
     expect(transactionRefreshToken.updateMany).not.toHaveBeenCalled();
   });
 
-  it('rejects two concurrent changes using an optimistic stale-password guard', async () => {
+  it('prevents simultaneous stale-password changes', async () => {
     const oldHash = await argon2.hash('old-password-strong', {
       type: argon2.argon2id, memoryCost: 4096, timeCost: 1, parallelism: 1,
     });

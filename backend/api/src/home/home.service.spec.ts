@@ -55,4 +55,27 @@ describe('HomeService history and personalized feed', () => {
     }]);
     expect(recommendations.forUser).toHaveBeenCalledWith('user-1', 'TZ');
   });
+
+  it('places followed-artist tracks in their own Home shelf without duplicates', async () => {
+    recommendations.forUser.mockResolvedValue([
+      { trackId: 'followed-1', reason: 'Because you follow this artist' },
+      { trackId: 'discovery-1', reason: 'More from your favorite artists' },
+      { trackId: 'followed-2', reason: 'Because you follow this artist' },
+    ]);
+    await expect(service.feed('user-1', 'TZ')).resolves.toEqual([
+      {
+        sectionType: 'followed_artists',
+        title: 'From Artists You Follow',
+        layout: 'rail',
+        trackIds: ['followed-1', 'followed-2'],
+      },
+      {
+        sectionType: 'personalized',
+        title: 'Made for You',
+        layout: 'rail',
+        trackIds: ['discovery-1'],
+      },
+    ]);
+  });
+
 });

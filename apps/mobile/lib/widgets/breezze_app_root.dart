@@ -76,9 +76,11 @@ class _BreezzeAppRootState extends ConsumerState<BreezzeAppRoot> with WidgetsBin
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed &&
-        ref.read(authSessionProvider) is AuthSignedIn) {
-      unawaited(ref.read(outboxSyncProvider).drainIfSignedIn());
+    if (state == AppLifecycleState.resumed) {
+      unawaited(ref.read(authSessionProvider.notifier).flushPendingLogouts());
+      if (ref.read(authSessionProvider) is AuthSignedIn) {
+        unawaited(ref.read(outboxSyncProvider).drainIfSignedIn());
+      }
     }
   }
 

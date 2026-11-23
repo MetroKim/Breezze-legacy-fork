@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../api/breezze_api.dart';
+import 'pending_logout_queue.dart';
 import '../../features/player/player_controller.dart';
 
 /// Auth session state — what the UI renders.
@@ -70,6 +72,8 @@ class AuthSessionController extends Notifier<AuthState> {
   int _socialAttempt = 0;
   static const _refreshTokenKey = 'breezze.refresh_token';
   static const _secureStorage = FlutterSecureStorage();
+  late final PendingLogoutQueue _pendingLogouts =
+      PendingLogoutQueue(SecurePendingLogoutPersistence(_secureStorage));
 
   static const _configuredApiUrl = String.fromEnvironment('BREEZZE_API_URL');
   static const _productionApiUrl =
@@ -117,7 +121,19 @@ class AuthSessionController extends Notifier<AuthState> {
     }
   }
 
+  /// Retry prior offline sign-outs, but never restore these old tokens as a
+  /// login session. Guest mode can call this on app resume too.
+  Future<void> flushPendingLogouts() async {
+    try {
+      await _pendingLogouts.flush((token) =>
+          _api.logout(token).timeout(const Duration(seconds: 3)));
+    } catch (_) {
+      // Encrypted pending revocations remain on-device for another attempt.
+    }
+  }
+
   Future<void> restoreSession() async {
+    unawaited(flushPendingLogouts());
     try {
       final refreshToken = await _secureStorage.read(key: _refreshTokenKey);
       if (refreshToken == null || refreshToken.isEmpty) {
@@ -310,9 +326,13 @@ class AuthSessionController extends Notifier<AuthState> {
     } catch (_) {}
     if (!allDevices && refreshToken != null) {
       try {
-        await _api.logout(refreshToken);
+        await _api.logout(refreshToken).timeout(const Duration(seconds: 3));
       } catch (_) {
-        // Local logout must still complete when the network is unavailable.
+        // Keep the *revocation request*, not an active login session.
+        // Retry on launch/resume when the device regains connectivity.
+        try {
+          await _pendingLogouts.enqueue(refreshToken);
+        } catch (_) {}
       }
     }
     _api.accessToken = null;

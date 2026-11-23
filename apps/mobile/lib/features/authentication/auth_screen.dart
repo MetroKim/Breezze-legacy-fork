@@ -2,10 +2,8 @@ import '../search/search_screen.dart';
 import 'package:breezze_design_system/breezze_design_system.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../core/auth/auth_session.dart';
-import '../../core/api/breezze_api.dart';
 import '../../widgets/bz_brand_icons.dart';
 
 /// Auth screen — login + register in one premium glass card, wired to
@@ -24,84 +22,18 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   final _password = TextEditingController();
   final _displayName = TextEditingController();
   final _mfaCode = TextEditingController();
+  final _oldPassword = TextEditingController();
   bool _registerMode = false;
-  bool _legacyFallback = false;
   bool _revealPassword = false;
-  late Future<Map<String, dynamic>> _socialProviders;
   bool _mfaBusy = false;
+  bool _revealOldPassword = false;
+  bool _resetBusy = false;
   String? _mfaError;
 
   @override
   void initState() {
     super.initState();
-    final mode = ref.read(authSessionProvider.notifier);
-    _registerMode = mode.usesAuth0Auth && !mode.usesAuth0Embedded
-        ? false
-        : widget.startInRegisterMode;
-    _socialProviders = _prepareSocialFlows();
-  }
-
-  Future<Map<String, dynamic>> _prepareSocialFlows() async {
-    // Do not start old NestJS-owned Google/Apple OAuth flows when Supabase
-    // is the configured auth authority. Provider OAuth can be enabled only
-    // after it is configured for the selected Supabase project.
-    final session = ref.read(authSessionProvider.notifier);
-    if (session.usesSupabaseAuth || session.usesAuth0Embedded) {
-      return <String, dynamic>{};
-    }
-    if (session.usesAuth0Auth) {
-      try {
-        final api = session.api;
-        final flags = await api.socialProviders()
-            .timeout(const Duration(seconds: 10));
-        if (flags['auth0'] != true) return <String, dynamic>{'auth0': false};
-        final flow = await api.startSocialLogin('auth0')
-            .timeout(const Duration(seconds: 10));
-        return <String, dynamic>{'auth0': true, 'auth0Flow': flow};
-      } catch (_) {
-        return <String, dynamic>{'auth0': false};
-      }
-    }
-    try {
-      final api = session.api;
-      final flags = await api.socialProviders()
-          .timeout(const Duration(seconds: 10));
-      final result = Map<String, dynamic>.from(flags);
-      for (final provider in const ['apple', 'google']) {
-        if (result[provider] == true) {
-          try {
-            result['${provider}Flow'] = await api.startSocialLogin(provider)
-                .timeout(const Duration(seconds: 10));
-          } catch (_) {
-            // A failed preflight disables only that button; email and the
-            // other provider remain available.
-          }
-        }
-      }
-      return result;
-    } catch (_) {
-      return <String, dynamic>{};
-    }
-  }
-
-  bool _freshFlow(Object? raw) {
-    if (raw is! Map || raw['expiresAt'] is! String) return false;
-    final until = DateTime.tryParse(raw['expiresAt'] as String);
-    return until != null &&
-        until.isAfter(DateTime.now().toUtc().add(const Duration(seconds: 15)));
-  }
-
-  Future<void> _signInWith(String provider, Map flow) async {
-    if (_freshFlow(flow)) {
-      await ref.read(authSessionProvider.notifier).socialLogin(
-        provider,
-        preparedFlow: Map<String, dynamic>.from(flow),
-      );
-    }
-    // Refresh one-time flows after cancellation, expiry or a failed attempt.
-    if (mounted && ref.read(authSessionProvider) is! AuthSignedIn) {
-      setState(() => _socialProviders = _prepareSocialFlows());
-    }
+    _registerMode = widget.startInRegisterMode;
   }
 
   @override
@@ -110,25 +42,19 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     _password.dispose();
     _displayName.dispose();
     _mfaCode.dispose();
+    _oldPassword.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
     final controller = ref.read(authSessionProvider.notifier);
-    if (controller.usesAuth0Auth && _legacyFallback) {
-      await controller.loginLegacy(_email.text.trim(), _password.text);
-      return;
-    }
     if (_registerMode) {
       await controller.register(
-        _email.text.trim(),
-        _password.text,
+        _email.text.trim(), _password.text,
         displayName: _displayName.text.trim().isEmpty
-            ? null
-            : _displayName.text.trim(),
+            ? null : _displayName.text.trim(),
       );
-      if (controller.usesAuth0Embedded && mounted &&
-          ref.read(authSessionProvider) is AuthError &&
+      if (mounted && ref.read(authSessionProvider) is AuthError &&
           (ref.read(authSessionProvider) as AuthError).code ==
               'EMAIL_VERIFICATION_REQUIRED') {
         _password.clear();
@@ -136,6 +62,33 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
       }
     } else {
       await controller.login(_email.text.trim(), _password.text);
+    }
+  }
+
+  Future<void> _resetPassword() async {
+    if (_resetBusy || _email.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter your email address first.')),
+      );
+      return;
+    }
+    setState(() => _resetBusy = true);
+    try {
+      await ref.read(authSessionProvider.notifier)
+          .requestPasswordReset(_email.text.trim());
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('If your account exists, check your email for a reset link.'),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Password recovery is unavailable right now.')),
+      );
+    } finally {
+      if (mounted) setState(() => _resetBusy = false);
     }
   }
 
@@ -155,7 +108,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     final theme = Theme.of(context);
     final auth = ref.watch(authSessionProvider);
     final busy = auth is AuthSigningIn;
-    final socialBusy = auth is AuthSigningIn && auth.social;
     final error = auth is AuthError ? auth.code : null;
 
     if (auth is AuthMfaRequired) return _buildMfaRequired(context, auth);
@@ -181,8 +133,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                     ),
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 480),
-                      child: _loginPanel(context, busy: busy, error: error,
-                        socialBusy: socialBusy),
+                      child: _loginPanel(context, busy: busy, error: error),
                     ),
                   ),
                 ),
@@ -206,13 +157,13 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     );
   }
 
-  /// Auth0's hosted Universal Login owns passwords, registration and MFA.
-  /// Breezze receives only a one-time server-issued device session.
-  Widget _auth0LoginPanel(BuildContext context, {
+  Widget _loginPanel(BuildContext context, {
     required bool busy,
     required String? error,
   }) {
     final theme = Theme.of(context);
+    final needsClaim = error == 'SUPABASE_ACCOUNT_LINK_REQUIRED' ||
+        error == 'SUPABASE_LEGACY_PASSWORD_INVALID';
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -234,360 +185,163 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Welcome to Breezze',
-                  style: theme.textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.w800, letterSpacing: -0.7)),
+              Text(
+                needsClaim
+                    ? 'Restore your library'
+                    : _registerMode ? 'Create your account' : 'Welcome to Breezze',
+                style: theme.textTheme.headlineMedium?.copyWith(
+                  fontWeight: FontWeight.w800, letterSpacing: -0.7,
+                ),
+              ),
               const SizedBox(height: 8),
               Text(
-                'Sign in or create an account securely with Auth0.',
+                needsClaim
+                    ? 'Confirm your previous Breezze password to keep your playlists and favorites.'
+                    : _registerMode
+                        ? 'Save music and build your first playlist.'
+                        : 'Sign in to open your library and playlists.',
                 style: TextStyle(fontSize: BzType.body, color: theme.bzText2),
               ),
               const SizedBox(height: 28),
-              FutureBuilder<Map<String, dynamic>>(
-                future: _socialProviders,
-                builder: (context, snapshot) {
-                  final providers = snapshot.data ?? const <String, dynamic>{};
-                  final flow = providers['auth0Flow'];
-                  final ready = _freshFlow(flow);
-                  return Column(
+              if (!needsClaim) ...[
+                OutlinedButton(
+                  onPressed: busy ? null : () =>
+                      Navigator.of(context).push(MaterialPageRoute<void>(
+                    builder: (_) => Scaffold(
+                      appBar: AppBar(), body: const SearchScreen(),
+                    ),
+                  )),
+                  child: const Text('Browse music'),
+                ),
+                const SizedBox(height: 24),
+                AutofillGroup(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      FilledButton(
-                        onPressed: ready && !busy
-                            ? () => _signInWith('auth0', flow as Map)
-                            : null,
-                        child: const Text('Continue with Auth0'),
-                      ),
-                      if (!ready) ...[
-                        const SizedBox(height: 10),
-                        Text(
-                          snapshot.connectionState == ConnectionState.waiting
-                              ? 'Preparing secure sign-in…'
-                              : 'Auth0 is not configured or this sign-in has expired.',
-                          style: TextStyle(color: theme.bzText2, fontSize: 12),
+                      if (_registerMode) ...[
+                        _premiumField(
+                          controller: _displayName,
+                          label: 'Display name',
+                          hint: 'Your name',
+                          hints: const [AutofillHints.name],
                         ),
-                        TextButton(
-                          onPressed: busy ? null : () => setState(() {
-                            _socialProviders = _prepareSocialFlows();
-                          }),
-                          child: const Text('Retry secure sign-in'),
-                        ),
+                        const SizedBox(height: 18),
                       ],
-                    ],
-                  );
-                },
-              ),
-              if (error != null) ...[
-                const SizedBox(height: 12),
-                Semantics(
-                  liveRegion: true,
-                  child: Text(_errorText(error),
-                      style: TextStyle(color: theme.bzError, fontSize: 13)),
-                ),
-              ],
-              const SizedBox(height: 18),
-              OutlinedButton(
-                onPressed: busy
-                    ? null
-                    : () => Navigator.of(context).push(MaterialPageRoute<void>(
-                          builder: (_) => Scaffold(
-                            appBar: AppBar(), body: const SearchScreen()),
-                        )),
-                child: const Text('Browse music without signing in'),
-              ),
-              const SizedBox(height: 12),
-              TextButton(
-                onPressed: busy ? null : () => setState(() {
-                  _legacyFallback = true;
-                  _registerMode = false;
-                }),
-                child: const Text('Existing Breezze account? Use your password to link it'),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'By continuing, you agree to our Terms and Privacy Policy.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: theme.bzText2, fontSize: 11),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _loginPanel(BuildContext context, {
-    required bool busy,
-    required bool socialBusy,
-    required String? error,
-  }) {
-    final session = ref.read(authSessionProvider.notifier);
-    // Embedded Auth0 retains Breezze's own design-system form and branding.
-    // Hosted Auth0 remains an opt-in fallback, never the embedded default.
-    if (session.usesAuth0Auth && !session.usesAuth0Embedded &&
-        !_legacyFallback) {
-      return _auth0LoginPanel(context, busy: busy, error: error);
-    }
-    final theme = Theme.of(context);
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (MediaQuery.sizeOf(context).width < 980) ...[
-          Align(
-            alignment: Alignment.centerLeft,
-            child: BzRibbonLogo(width: 168, color: theme.bzText1),
-          ),
-          const SizedBox(height: 28),
-        ],
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 34),
-          decoration: BoxDecoration(
-            color: theme.bzSurface1,
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: theme.bzSeparator),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                _registerMode ? 'Create your account' : 'Welcome to Breezze',
-                style: theme.textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.7,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _registerMode ? 'Save music and build your first playlist.'
-                    : 'Sign in to open your library and playlists.',
-                style: TextStyle(
-                  fontSize: BzType.body,
-                  color: theme.bzText2,
-                ),
-              ),
-              const SizedBox(height: 28),
-              OutlinedButton(
-                onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                    builder: (_) => Scaffold(appBar: AppBar(), body: const SearchScreen()))),
-                child: const Text('Browse music'),
-              ),
-              const SizedBox(height: 12),
-              if (!session.usesAuth0Auth)
-              FutureBuilder<Map<String, dynamic>>(
-                future: _socialProviders,
-                builder: (context, snapshot) {
-                  final providers = snapshot.data ?? const <String, dynamic>{};
-                  final googleFlow = providers['googleFlow'];
-                  final appleFlow = providers['appleFlow'];
-                  final googleReady = _freshFlow(googleFlow);
-                  final appleReady = _freshFlow(appleFlow);
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _socialButton(
-                        label: 'Continue with Apple',
-                        isApple: true,
-                        enabled: appleReady && !busy,
-                        onPressed: () => _signInWith('apple', appleFlow as Map),
-                      ),
-                      const SizedBox(height: 12),
-                      _socialButton(
-                        label: 'Continue with Google',
-                        isApple: false,
-                        enabled: googleReady && !busy,
-                        onPressed: () => _signInWith('google', googleFlow as Map),
-                      ),
-                      if (!googleReady || !appleReady) ...[
-                        const SizedBox(height: 12),
-                        Text(
-                          snapshot.connectionState == ConnectionState.waiting
-                              ? 'Preparing secure sign-in providers…'
-                              : (providers['google'] == true ||
-                                  providers['apple'] == true)
-                                ? 'Provider sign-in is unavailable or expired. '
-                                  'You can refresh it, or continue with email.'
-                                : 'Continue with your email address.',
-                          style: TextStyle(
-                            color: theme.bzText2,
-                            fontSize: 12,
-                            height: 1.35,
-                          ),
-                        ),
-                        if (snapshot.connectionState != ConnectionState.waiting)
-                          TextButton(
-                            onPressed: busy ? null : () => setState(() {
-                              _socialProviders = _prepareSocialFlows();
-                            }),
-                            child: const Text('Refresh social sign-in'),
-                          ),
-                      ],
-                    ],
-                  );
-                },
-              ),
-              if (session.usesAuth0Auth && _legacyFallback)
-                TextButton(
-                  onPressed: busy ? null : () => setState(() {
-                    _legacyFallback = false;
-                  }),
-                  child: const Text('Back to Breezze sign-in'),
-                ),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(child: Divider(color: theme.bzSeparator)),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    child: Text(session.usesAuth0Auth && _legacyFallback
-                          ? 'Existing Breezze account' : 'or use email',
-                        style: TextStyle(color: theme.bzText2, fontSize: 12)),
-                  ),
-                  Expanded(child: Divider(color: theme.bzSeparator)),
-                ],
-              ),
-              const SizedBox(height: 24),
-              AutofillGroup(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (_registerMode) ...[
                       _premiumField(
-                        controller: _displayName,
-                        label: 'Display name',
-                        hint: 'Your name',
-                        hints: const [AutofillHints.name],
+                        controller: _email,
+                        label: 'Email address',
+                        hint: 'you@example.com',
+                        hints: const [AutofillHints.email],
+                        keyboard: TextInputType.emailAddress,
                       ),
                       const SizedBox(height: 18),
-                    ],
-                    _premiumField(
-                      controller: _email,
-                      label: 'Email address',
-                      hint: 'you@example.com',
-                      hints: const [AutofillHints.email],
-                      keyboard: TextInputType.emailAddress,
-                    ),
-                    const SizedBox(height: 18),
-                    _premiumField(
-                      controller: _password,
-                      label: 'Password',
-                      hint: 'Enter your password',
-                      hints: [_registerMode
-                          ? AutofillHints.newPassword
-                          : AutofillHints.password],
-                      obscure: !_revealPassword,
-                      suffix: IconButton(
-                        tooltip: _revealPassword ? 'Hide password' : 'Show password',
-                        onPressed: () => setState(
-                          () => _revealPassword = !_revealPassword,
+                      _premiumField(
+                        controller: _password,
+                        label: 'Password',
+                        hint: 'Enter your password',
+                        hints: [_registerMode
+                            ? AutofillHints.newPassword
+                            : AutofillHints.password],
+                        obscure: !_revealPassword,
+                        suffix: IconButton(
+                          tooltip: _revealPassword
+                              ? 'Hide password' : 'Show password',
+                          onPressed: () => setState(
+                            () => _revealPassword = !_revealPassword,
+                          ),
+                          icon: BzSvgIcon(
+                            name: _revealPassword ? 'eye-off' : 'eye',
+                            size: 20, color: theme.bzText2,
+                          ),
                         ),
-                        icon: BzSvgIcon(
-                          name: _revealPassword ? 'eye-off' : 'eye',
-                          size: 20,
-                          color: theme.bzText2,
-                        ),
+                        onSubmitted: (_) { if (!busy) _submit(); },
                       ),
-                      onSubmitted: (_) => !busy ? _submit() : null,
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
+              ] else ...[
+                _premiumField(
+                  controller: _oldPassword,
+                  label: 'Previous Breezze password',
+                  hint: 'Your previous account password',
+                  hints: const [AutofillHints.password],
+                  obscure: !_revealOldPassword,
+                  suffix: IconButton(
+                    tooltip: _revealOldPassword
+                        ? 'Hide password' : 'Show password',
+                    onPressed: () => setState(() =>
+                        _revealOldPassword = !_revealOldPassword),
+                    icon: BzSvgIcon(
+                      name: _revealOldPassword ? 'eye-off' : 'eye',
+                      size: 20, color: theme.bzText2,
+                    ),
+                  ),
+                ),
+              ],
               if (error != null) ...[
                 const SizedBox(height: 12),
                 Semantics(
                   liveRegion: true,
-                  child: Text(_errorText(error), style: TextStyle(
-                    color: error == 'EMAIL_VERIFICATION_REQUIRED'
-                        ? theme.bzText1 : theme.bzError, fontSize: 13,
-                  )),
+                  child: Text(
+                    _errorText(error),
+                    style: TextStyle(
+                      color: error == 'EMAIL_VERIFICATION_REQUIRED' ||
+                              error == 'SUPABASE_ACCOUNT_LINK_REQUIRED'
+                          ? theme.bzText1 : theme.bzError,
+                      fontSize: 13,
+                    ),
+                  ),
                 ),
               ],
               const SizedBox(height: 24),
               _SubmitButton(
-                label: _registerMode ? 'Create account' : 'Continue with email',
+                label: needsClaim
+                    ? 'Restore my Breezze library'
+                    : _registerMode ? 'Create account' : 'Sign in',
                 busy: busy,
-                onPressed: _submit,
+                onPressed: needsClaim
+                    ? () => ref.read(authSessionProvider.notifier)
+                        .claimExistingLibrary(_email.text.trim(), _oldPassword.text)
+                    : _submit,
               ),
-              const SizedBox(height: 22),
-              if (!session.usesAuth0Auth ||
-                  (session.usesAuth0Embedded && !_legacyFallback))
-              Center(
-                child: TextButton(
-                  onPressed: busy ? null : () => setState(
-                    () => _registerMode = !_registerMode,
-                  ),
-                  child: Text(
-                    _registerMode
-                        ? 'Already have an account? Sign in'
-                        : 'New to Breezze? Create an account',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: theme.bzText1),
+              if (!needsClaim) ...[
+                const SizedBox(height: 16),
+                Center(
+                  child: TextButton(
+                    onPressed: busy ? null : () => setState(
+                      () => _registerMode = !_registerMode,
+                    ),
+                    child: Text(
+                      _registerMode
+                          ? 'Already have an account? Sign in'
+                          : 'New to Breezze? Create an account',
+                      style: TextStyle(color: theme.bzText1),
+                    ),
                   ),
                 ),
-              ),
-              if (session.usesAuth0Embedded && !_legacyFallback) ...[
                 if (!_registerMode)
                   Align(
                     alignment: Alignment.centerRight,
                     child: TextButton(
-                      onPressed: busy ? null : () async {
-                        final email = _email.text.trim();
-                        if (email.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Enter your email address first.'),
-                            ),
-                          );
-                          return;
-                        }
-                        try {
-                          await session.api.sendAuth0PasswordReset(email);
-                          if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'If your account exists, check your email for the reset link.',
-                              ),
-                            ),
-                          );
-                        } catch (_) {
-                          if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Password reset is temporarily unavailable.'),
-                            ),
-                          );
-                        }
-                      },
+                      onPressed: busy || _resetBusy ? null : _resetPassword,
                       child: const Text('Forgot password?'),
                     ),
                   ),
+              ] else ...[
                 TextButton(
-                  onPressed: busy ? null : () => setState(() {
-                    _legacyFallback = true;
-                    _registerMode = false;
-                  }),
-                  child: const Text('Already have a Breezze account? Migrate it'),
+                  onPressed: busy ? null : () => ref
+                      .read(authSessionProvider.notifier)
+                      .login(_email.text.trim(), _password.text),
+                  child: const Text('Sign in with another account'),
                 ),
               ],
               const SizedBox(height: 12),
               Text(
                 'By continuing, you agree to our Terms and Privacy Policy.',
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 11,
-                  height: 1.4,
-                  color: theme.bzText2,
-                ),
+                style: TextStyle(fontSize: 11, height: 1.4,
+                    color: theme.bzText2),
               ),
-              if (socialBusy) ...[
-                const SizedBox(height: 16),
-                TextButton(
-                  onPressed: () => ref.read(authSessionProvider.notifier)
-                      .cancelSocialLogin(),
-                  child: const Text('Cancel sign-in'),
-                ),
-              ],
             ],
           ),
         ),
@@ -595,11 +349,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
         Text(
           'FREE LISTENING · SECURE ACCOUNT · DEVICE SYNC',
           textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 10,
-            letterSpacing: 1.1,
-            color: theme.bzText2,
-          ),
+          style: TextStyle(fontSize: 10, letterSpacing: 1.1,
+              color: theme.bzText2),
         ),
       ],
     );
@@ -647,61 +398,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
         ),
       ],
     );
-  }
-
-  Widget _socialButton({
-    required String label,
-    required bool isApple,
-    required bool enabled,
-    required VoidCallback onPressed,
-  }) {
-    final theme = Theme.of(context);
-    const googleMark = '<svg xmlns="http://www.w3.org/2000/svg" '
-        'viewBox="0 0 24 24"><path fill="#4285F4" d="M22.5 12.25c0-.75-.08-1.5-.2-2.2H12v4.15h5.9a5.06 5.06 0 01-2.2 3.3v2.7h3.55c2.06-1.9 3.25-4.7 3.25-7.95z"/>'
-        '<path fill="#34A853" d="M12 23c2.93 0 5.4-.97 7.2-2.8l-3.55-2.7c-.98.67-2.22 1.05-3.65 1.05-2.8 0-5.18-1.9-6.03-4.45H2.3v2.8A11 11 0 0012 23z"/>'
-        '<path fill="#FBBC05" d="M5.97 14.1A6.64 6.64 0 015.62 12c0-.73.13-1.44.35-2.1V7.1H2.3A11 11 0 001 12c0 1.77.42 3.45 1.3 4.9l3.67-2.8z"/>'
-        '<path fill="#EA4335" d="M12 5.45c1.6 0 3.05.55 4.18 1.65L19.3 4A10.4 10.4 0 0012 1C7.7 1 3.98 3.45 2.3 7.1l3.67 2.8C6.82 7.35 9.2 5.45 12 5.45z"/></svg>';
-    const appleMark = '<svg xmlns="http://www.w3.org/2000/svg" '
-        'viewBox="0 0 24 28"><path fill="currentColor" d="M18.7 14.9c0-2.4 1.9-3.6 2-3.7-1.1-1.7-2.9-2-3.5-2.1-1.5-.2-3 .9-3.7.9-.8 0-1.9-.9-3.2-.9-1.7 0-3.2 1-4 2.5-1.7 3-1.2 7.3 1.2 9.9.8 1.3 1.7 2.7 3 2.7 1.2-.1 1.7-.8 3.2-.8s1.9.8 3.3.8c1.4 0 2.2-1.2 3-2.5.9-1.4 1.3-2.7 1.3-2.8-.1 0-2.6-1-2.6-3.9zM16.3 6.8c.7-.9 1.2-2 1.1-3.1-1 .1-2.2.7-2.9 1.6-.7.8-1.3 2-1.2 3 .1 0 1.9.1 3-1.5z"/></svg>';
-    return SizedBox(
-      height: 54,
-      child: OutlinedButton.icon(
-        onPressed: enabled ? onPressed : null,
-        icon: SvgPicture.string(isApple ? appleMark : googleMark,
-          width: 21, height: 22,
-          colorFilter: isApple
-              ? ColorFilter.mode(theme.bzText1, BlendMode.srcIn) : null,
-        ),
-        label: Text(label),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: theme.bzText1,
-          backgroundColor: theme.bzSurface2,
-          disabledForegroundColor: theme.bzText2,
-          side: BorderSide(color: theme.bzSeparator),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-          textStyle: const TextStyle(fontWeight: FontWeight.w600),
-        ),
-      ),
-    );
-  }
-
-
-  Future<void> _runMfa(Future<void> Function() action) async {
-    setState(() {
-      _mfaBusy = true;
-      _mfaError = null;
-    });
-    try {
-      await action();
-    } on BreezzeApiException catch (error) {
-      if (mounted) setState(() => _mfaError = error.code);
-    } catch (_) {
-      if (mounted) setState(() => _mfaError = 'NETWORK_ERROR');
-    } finally {
-      if (mounted) setState(() => _mfaBusy = false);
-    }
   }
 
   Widget _buildMfaRequired(BuildContext context, AuthMfaRequired auth) {
@@ -885,45 +581,28 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
 
   String _errorText(String code) {
     switch (code) {
-      case 'EMAIL_TAKEN':
-        return 'That email is already registered.';
       case 'INVALID_CREDENTIALS':
         return 'Wrong email or password.';
       case 'EMAIL_VERIFICATION_REQUIRED':
         return 'Check your inbox and verify your email before signing in.';
       case 'SUPABASE_ACCOUNT_LINK_REQUIRED':
-        return 'This email already belongs to Breezze. Sign in with your existing account to link it.';
+        return 'This Supabase account matches an existing Breezze library. Enter your previous Breezze password to link it securely.';
+      case 'SUPABASE_LEGACY_PASSWORD_INVALID':
+        return 'The previous Breezze password was incorrect.';
+      case 'SUPABASE_ACCOUNT_MIGRATION_DISABLED':
+        return 'Existing-account migration is not enabled yet.';
+      case 'SUPABASE_CLAIM_NOT_READY':
+        return 'Sign in with Supabase first, then restore your library.';
       case 'SUPABASE_AUTH_NOT_CONFIGURED':
-        return 'Supabase sign-in is not configured for Breezze yet.';
+        return 'Breezze sign-in is not configured yet.';
       case 'SUPABASE_AUTH_UNAVAILABLE':
-        return 'Supabase sign-in is temporarily unavailable. Try again.';
+        return 'Breezze sign-in is temporarily unavailable.';
       case 'RATE_LIMITED':
-        return 'Too many attempts. Try again later.';
+        return 'Too many attempts. Please try again later.';
       case 'NETWORK_ERROR':
         return 'Cannot reach Breezze. Check your connection.';
-      case 'SOCIAL_ACCOUNT_LINK_REQUIRED':
-        return 'An account already uses this email. Sign in with email first.';
-      case 'AUTH0_ACCOUNT_LINK_REQUIRED':
-        return 'This email already belongs to Breezze. Sign in with your existing password, then link Auth0 in Account settings.';
-      case 'SOCIAL_AUTH_EXPIRED':
-        return 'The browser sign-in expired. Try again.';
-      case 'SOCIAL_PROVIDER_NOT_CONFIGURED':
-        return 'This sign-in provider is not configured yet.';
-      case 'SOCIAL_AUTH_FAILED':
-        return 'Secure sign-in did not finish. Please retry or use email.';
-      case 'AUTH0_DOMAIN_NOT_CONFIGURED':
-        return 'Auth0 is not configured for Breezze yet.';
-      case 'AUTH0_EMBEDDED_NOT_CONFIGURED':
-        return 'Breezze sign-in is not enabled yet.';
-      case 'AUTH0_EMBEDDED_UNAVAILABLE':
-      case 'AUTH0_ID_TOKEN_MISSING':
-        return 'The account service is unavailable. Please retry shortly.';
-      case 'AUTH0_EMBEDDED_MFA_REQUIRED':
-        return 'This account needs additional verification. Contact support.';
-      case 'AUTH0_SIGNUP_REJECTED':
-        return 'Check your account details and password requirements.';
       default:
-        return 'Something went wrong. Try again.';
+        return 'Sign-in could not finish. Please retry.';
     }
   }
 

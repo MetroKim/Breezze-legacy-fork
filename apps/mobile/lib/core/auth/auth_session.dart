@@ -51,9 +51,13 @@ class AuthSessionController extends Notifier<AuthState> {
   static const _productionApiUrl =
       'https://breezze-api-edge.ykw8vmq7ph.workers.dev';
   static const _googleWebClientId =
-      String.fromEnvironment('GOOGLE_WEB_CLIENT_ID');
+      String.fromEnvironment('GOOGLE_WEB_CLIENT_ID',
+        defaultValue:
+            '990493102909-6pj8hj2nkthcrb2a807mjnhhrgf5pqo7.apps.googleusercontent.com');
   static const _googleIosClientId =
-      String.fromEnvironment('GOOGLE_IOS_CLIENT_ID');
+      String.fromEnvironment('GOOGLE_IOS_CLIENT_ID',
+        defaultValue:
+            '990493102909-pg9d31ongdv2aghv53vb3uttgha9jnn3.apps.googleusercontent.com');
   static const _callback = 'io.breezze.app://login-callback/';
 
   StreamSubscription<supa.AuthState>? _sessionListener;

@@ -1,48 +1,50 @@
-# Breezze — Supabase-first infrastructure
+# Breezze — Supabase + Cloudflare R2 hybrid
 
-**Decision:** Use Supabase for the hosted PostgreSQL database, email/password Auth, and private Storage; retain Flutter, the NestJS business API, Redis for transient queues/cache, and provider-hosted authorized audio streaming. Supabase replaces the **R2 storage dependency**, not the need for a backend process.
+## Architecture decision
 
-## Already prepared in this repository
+**Supabase:** hosted PostgreSQL database and future Auth provider for listener identity, plus an optional **private avatar bucket**.  
+**Cloudflare:** private R2 `breezze-media` bucket for Breezze-owned/rights-cleared audio, `breezze-media` Worker for HMAC-signed ranged reads, and `breezze-api-edge` Worker for HTTPS/CORS/authenticated API routing.  
+**Railway:** existing NestJS app, Redis and metadata services continue while Supabase database/Auth migration is validated.  
+**Flutter:** connects to the NestJS API and approved providers; no database admin key, R2 credential or service-role key is ever embedded in an app binary.
 
-- `infra/cloudflare/media-worker` now reads approved private audio from Supabase Storage rather than an R2 bucket.
-- `supabase/migrations/20261123000000_breezze_buckets.sql` creates locked-down `breezze-media` and `breezze-avatars` buckets.
-- Existing Prisma models use PostgreSQL, so the NestJS API can be migrated to Supabase's Postgres after a verified data export/import and suitable connection-pool settings.
-- Breezze's current account sessions and passwords remain on the existing database until a tested, explicitly scheduled Auth migration takes place.
+```text
+Flutter --HTTPS--> Cloudflare API Worker --> Railway NestJS API
+                                              | Prisma
+                                              v
+                                Supabase Postgres (after verified data migration)
+                                              |
+                               Supabase Auth (after identity migration)
 
-## Secure, staged cutover
+Flutter --time-limited signed URL--> Cloudflare Media Worker --> private R2
+Flutter --provider-approved HTTPS------> Authorized streaming partners
+```
 
-1. **Create/connect the Supabase project.** Check Free plan quotas and pause behaviour before launch. Do not enable a paid subscription just for this migration.
-2. **Private media:** apply the Storage migration, add secret API key only to the Worker, match the NestJS signing key, and test GET, HEAD, Range, 404, expiry and 403. Do not embed the secret in Flutter.
-3. **PostgreSQL:** take a verified restore-capable backup of the Railway database; apply Prisma migrations to a separate Supabase development database; migrate and reconcile every table, foreign key, count and sensitive encrypted record. Update `DATABASE_URL` only in a guarded release with rollback available. In Supabase use a correctly scoped transaction/session pooler URL compatible with Prisma; use direct DB access for migrations when possible.
-4. **Authentication:** Supabase Auth and Breezze's existing custom JWT accounts are *different identity systems*. Do not replace login endpoints until user IDs, Argon2id password handling, provider identities, app sessions, refresh-token theft handling, MFA and account deletion semantics are migrated and verified together. Use a short compatibility transition with a server-side identity mapping; never copy raw passwords or downgrade hash security. Do not issue Supabase service-role credentials to a client.
-5. **User data security:** preserve current NestJS owner checks; enable RLS and auth.uid()-scoped policies for all new public tables that will be queried directly by `supabase_flutter` after Auth migration. Until that verification, do **not** grant broad `anon` or `authenticated` access.
-6. **CORS:** the API edge and NestJS both already support an exact-origin allowlist. Configure the actual deployed web origin; no billing product is needed for CORS.
+## Proven and not-yet-live
 
-## Configuration map (names only; never commit secret values)
+- Cloudflare R2 activation now works; the private `breezze-media` bucket was created on November 23, 2026 in EEUR with Standard storage.
+- R2 media Worker binding is `MEDIA_BUCKET`; its HMAC signing secret name is `MEDIA_SIGNING_KEY`. Objects are `audio/{canonicalTrackId}/{variant}`; every URL has an expiry and HMAC validated before any R2 read.
+- Supabase account currently contains **one inactive project, `metro bot`**, which is unrelated; it was intentionally not modified. A dedicated Breezze Supabase project must be chosen or created before applying any schema change, and the user's organization and any applicable billing must be confirmed.
+- Current Railway Postgres is authoritative until backups, migrations, count/key reconciliation, encrypted data compatibility, rollback and new service credentials have been tested.
+- Existing NestJS Argon2id/JWT user sessions cannot be blindly replaced by Supabase Auth: migrate IDs/password-based logins, verified emails, OAuth identities, MFA, session revocation and 30-day deletion semantics as a coordinated operation.
 
-| Runtime | Name | Purpose |
-|---|---|---|
-| Cloudflare media Worker | `SUPABASE_URL` | Supabase project HTTPS origin |
-| Cloudflare media Worker | `SUPABASE_SECRET_KEY` | Private server-only Storage access |
-| Cloudflare media Worker | `SUPABASE_MEDIA_BUCKET` | `breezze-media` |
-| Cloudflare media Worker | `MEDIA_SIGNING_KEY` | Shared HMAC key used only after rights authorization |
-| NestJS API | `CDN_BASE_URL` | HTTPS origin of deployed media Worker |
-| NestJS API | `MEDIA_SIGNING_KEY` | Same HMAC key as Worker |
-| NestJS API | `DATABASE_URL` | Supabase PostgreSQL connection after migration |
-| NestJS API / edge | `CORS_ALLOWED_ORIGINS` / `WEB_ALLOWED_ORIGINS` | Explicitly approved frontend origins |
-| Flutter (only after Auth migration) | `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` | Public project URL and publishable client key; **never** secret API key |
+## Database integration with the existing code
+
+The NestJS backend already uses PostgreSQL through Prisma. A dedicated Supabase project can host those tables without rewriting business services. First apply `infra/supabase/schema_guard.sql` in the destination project; keep `breezze` an **unexposed private schema**. Configure the destination Prisma connection string with `?schema=breezze` (and SSL as required), respecting Supabase's connection-pooler and migration guidance. Run migrations using an appropriate direct or session connection; do **not** overwrite production `DATABASE_URL` until the migrated copy is verified.
+
+A separate `supabase/migrations/20261123000000_breezze_buckets.sql` defines only private profile-avatar storage (not media audio). Do not grant anonymous or authenticated access to backend data tables before implementing owner-scoped RLS policies. An R2 bucket is not the same as a Supabase Storage bucket.
+
+## Edge media configuration
+
+- Cloudflare R2 bucket: `breezze-media` (private, no publicly exposed R2.dev endpoint).
+- Cloudflare media Worker: `breezze-media`, `MEDIA_BUCKET` R2 binding.
+- Worker secret: `MEDIA_SIGNING_KEY` (minimum 32 random bytes).
+- NestJS API: `MEDIA_SIGNING_KEY` **must match** Worker secret; `CDN_BASE_URL` is exactly the HTTPS media Worker origin.
+- Browser API: `WEB_ALLOWED_ORIGINS` Worker environment and `CORS_ALLOWED_ORIGINS` NestJS environment should contain *exact* trusted frontend origins; never use wildcard with credentials.
+- All R2 objects remain private; upload only content the app can legally host and deliver. Provider-hosted licensed streams should continue to flow directly to Flutter.
+- Never commit any signing, database or service-role credentials to the repository.
+
+The `.github/workflows/deploy-r2-media.yml` workflow can deploy the Worker from the reviewed branch after the required CI environment secrets are configured and corresponding NestJS deployment is prepared. The Worker and API must agree on their HMAC signing key; a premature key rotation would invalidate existing signed URLs.
 
 ## Limitations
 
-A free Supabase project is not an unlimited audio host; media traffic and user growth may exceed the storage/egress allowance. Supabase provides no commercial full-track rights. Deezer/YouTube Music discovery or cookies do not grant Breezze rights to download or redistribute audio. OAuth provider registration may still require the provider's own configuration or developer membership.
-
-**Deploy status:** integration code is on a draft branch; no Supabase project URL or secret has been supplied/connected yet. The production API still uses the old DB and code until an explicit, verified cutover.
-
-
-## Supabase-native media path (preferred)
-
-A Supabase Edge Function at `supabase/functions/media/index.ts` now handles short-lived media grants. It uses the **same HMAC and private Storage handler** as the Cloudflare fallback. Configure `MEDIA_BACKEND=supabase` and `CDN_BASE_URL=https://<project-ref>.supabase.co/functions/v1/media` only after the destination Supabase project exists, the Storage migration has been applied, the function is deployed, and its signed/ranged requests have been verified. No Cloudflare R2 billing is required. The API's **existing JWT auth and Prisma database have not been migrated**; they cannot be safely switched merely by inserting a project URL.
-
-For Supabase's newer server secret keys (`sb_secret_...`), send the key as the `apikey` header, not a JWT bearer token. Supabase Edge Functions receive these server-only keys in the `SUPABASE_SECRET_KEYS` JSON variable. Never ship it to Flutter. <https://supabase.com/docs/guides/getting-started/migrating-to-new-api-keys>
-
-The connected Supabase account currently exposes an *inactive, unrelated* project named **metro bot**; no Breezze project has been selected or created, so **no live Supabase data or production secrets have been changed**. Avoid running migration SQL against that unrelated project.
+Supabase is not an unlimited free music-hosting or commercial-label licensing service. This hybrid preserves Cloudflare R2 for privately authorized audio and Supabase for accounts/data. All media still requires track-level rights and territory checks. The resulting app is not production-ready until a dedicated Supabase project and data migration are verified and all exact-head platform CI checks pass.

@@ -4,7 +4,6 @@ describe('MediaSignerFactory', () => {
   const originalNodeEnv = process.env.NODE_ENV;
   const originalKey = process.env.MEDIA_SIGNING_KEY;
   const originalCdn = process.env.CDN_BASE_URL;
-  const originalMediaBackend = process.env.MEDIA_BACKEND;
 
   afterEach(() => {
     if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
@@ -13,8 +12,6 @@ describe('MediaSignerFactory', () => {
     else process.env.MEDIA_SIGNING_KEY = originalKey;
     if (originalCdn === undefined) delete process.env.CDN_BASE_URL;
     else process.env.CDN_BASE_URL = originalCdn;
-    if (originalMediaBackend === undefined) delete process.env.MEDIA_BACKEND;
-    else process.env.MEDIA_BACKEND = originalMediaBackend;
   });
 
   it('rejects a missing production signing key', () => {
@@ -54,35 +51,6 @@ describe('MediaSignerFactory', () => {
     expect(() => new MediaSignerFactory().create()).toThrow(
       'CDN_BASE_URL_MUST_BE_ORIGIN_ONLY',
     );
-  });
-
-  it('permits the exact trusted Supabase media function endpoint', () => {
-    process.env.NODE_ENV = 'production';
-    process.env.MEDIA_BACKEND = 'supabase';
-    process.env.MEDIA_SIGNING_KEY = 'x'.repeat(40);
-    process.env.CDN_BASE_URL =
-      'https://breezzeref.supabase.co/functions/v1/media';
-
-    const signed = new MediaSignerFactory().create()
-      .createPlaybackUrl('track1', 'AAC_256');
-    expect(signed.url).toContain(
-      'https://breezzeref.supabase.co/functions/v1/media/audio/track1/AAC_256?');
-  });
-
-  it('rejects untrusted Supabase media hostnames and path prefixes', () => {
-    process.env.NODE_ENV = 'production';
-    process.env.MEDIA_BACKEND = 'supabase';
-    process.env.MEDIA_SIGNING_KEY = 'x'.repeat(40);
-    for (const cdn of [
-      'https://example.com/functions/v1/media',
-      'https://breezzeref.supabase.co/functions/v1/other',
-      'https://breezzeref.supabase.co/functions/v1/media/extra',
-      'https://breezzeref.supabase.co/functions/v1/media?secret=leak',
-    ]) {
-      process.env.CDN_BASE_URL = cdn;
-      expect(() => new MediaSignerFactory().create()).toThrow(
-        'SUPABASE_MEDIA_ENDPOINT_INVALID');
-    }
   });
 
   it('uses the media Worker origin as the development fallback', () => {

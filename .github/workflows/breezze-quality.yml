@@ -341,5 +341,5 @@ jobs:
           node -e "const a=require('/tmp/breezze-worker-audit.json'); console.log('WORKER_AUDIT_TOTALS', JSON.stringify(a.metadata?.vulnerabilities)); for (const [name, v] of Object.entries(a.vulnerabilities || {})) console.log('WORKER_AUDIT_PACKAGE', name, JSON.stringify({severity:v.severity,isDirect:v.isDirect,range:v.range,fixAvailable:v.fixAvailable,via:v.via.map(x=>typeof x==='string'?x:{name:x.name,title:x.title,range:x.range,url:x.url})}));"
       - name: Typecheck Worker
         run: npm run check
-      - name: Test private Supabase media grants and byte ranges
+      - name: Test private R2 media grants, byte ranges, and browser CORS
         run: npm test

@@ -1,23 +1,11 @@
-# Breezze private media edge — Supabase Storage
+# Breezze Cloudflare R2 media Worker
 
-Breezze uses **Supabase Storage**, not Cloudflare R2, for Breezze-owned or separately rights-cleared audio. This Cloudflare Worker retains the existing signed `/audio/{trackId}/{variant}?e=...&s=...` contract used by the NestJS API and Flutter player. It never accepts user uploads or ingests third-party streams.
+This Worker retrieves **Breezze-owned or explicitly rights-cleared** private audio from the Cloudflare R2 bucket `breezze-media`. The connected bucket is provisioned in EEUR Standard storage and has no public R2 URL.
 
-## Setup
+The `MEDIA_BUCKET` binding is declared in `wrangler.toml`. Configure the `MEDIA_SIGNING_KEY` Worker secret to match the NestJS backend's `MEDIA_SIGNING_KEY`. Set NestJS `CDN_BASE_URL` to the HTTPS origin of the deployed `breezze-media` Worker after verification.
 
-1. Create a Supabase project and apply `supabase/migrations/20261123000000_breezze_buckets.sql`. It creates a *private* `breezze-media` bucket with a restrictive policy denying direct anon/authenticated access. The Worker is the only intended privileged reader.
-2. Add Worker secrets `MEDIA_SIGNING_KEY` (same strong secret used by the NestJS MediaSigner) and `SUPABASE_SECRET_KEY` (Supabase's backend-only sb_secret key).
-3. Set `SUPABASE_URL` to the HTTPS project origin (e.g. `https://project-ref.supabase.co`) and optionally `SUPABASE_MEDIA_BUCKET` to `breezze-media`. Keep the secret API key out of the Flutter app, commits, logs, and public environment variables.
-4. Deploy the Worker using Wrangler after the account and secrets are ready; configure the NestJS `CDN_BASE_URL` to its HTTPS origin and `MEDIA_SIGNING_KEY` to the matching key.
-5. Import only recordings that Breezze is **licensed to host and deliver**, at paths `audio/{canonicalTrackId}/{variant}`. Test a signed, short-lived GET, HEAD and byte-range stream, then confirm an expired signature is rejected.
+Authorization remains in NestJS's rights/territory service. The Worker only accepts time-limited HMAC-signed `GET` and `HEAD` for `/audio/{trackId}/{variant}`, supporting byte-range seeking and cache-safe responses. An unsigned link cannot read objects. Never expose an R2.dev public bucket URL or R2 credentials in Flutter.
 
-The Worker verifies HMAC signature and expiry **before** accessing Supabase. It forwards only validated HTTP range requests, handles missing objects, refuses redirects, and strips privileged upstream headers. Responses are `private, no-store`, so signed audio cannot accidentally enter shared CDN caches.
+The worker does not ingest Deezer/YouTube/Audius audio, accept uploads or grant music rights. Supabase is reserved for account identity, private application data and optional avatars; it is **not** the full-track media store.
 
-Supabase's Free tier has only **1 GB file storage** and limited egress. Do not use it as an unlimited music-CDN or rehost YouTube Music/Deezer recordings. Keep approved external provider playback direct-to-provider.
-
-**Important:** this migration does not move Breezze's current Railway PostgreSQL data or change existing login sessions. See `supabase/README.md` for the staged database + Auth migration. Do not cut over the live production DB without a verified backup, a schema migration, a data reconciliation plan and a rollback point.
-
-
-## Supabase-native Edge Function (preferred)
-
-The same HMAC-gated handler is now available as `supabase/functions/media/index.ts`.
-Set `MEDIA_BACKEND=supabase` and `CDN_BASE_URL=https://<project-ref>.supabase.co/functions/v1/media` in NestJS **after** deploying the function and verifying ranges, expiry and denial behavior. It reads its server-side key from Supabase's `SUPABASE_SECRET_KEYS` environment (JSON, `default` entry), never from Flutter. The Cloudflare Worker is an optional compatibility fallback, no longer an R2 dependency.
+To deploy, use the reviewed workflow in `.github/workflows/deploy-r2-media.yml` after the shared signing key, Cloudflare API token and account ID have been securely configured and smoke-tested. Keep the current Railway API and its database in place until migration acceptance.

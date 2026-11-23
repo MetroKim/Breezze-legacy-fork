@@ -181,7 +181,8 @@ class _BreezzeAppRootState extends ConsumerState<BreezzeAppRoot> with WidgetsBin
             return shell;
           }
 
-          // Authentication required before any navigation or playback screen.\n          return const AuthScreen();
+          // Authentication required before any navigation or playback screen.
+          return const AuthScreen();
         },
       ),
     );

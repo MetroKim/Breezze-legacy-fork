@@ -33,6 +33,14 @@ The NestJS backend already uses PostgreSQL through Prisma. A dedicated Supabase 
 
 A separate `supabase/migrations/20261123000000_breezze_buckets.sql` defines only private profile-avatar storage (not media audio). Do not grant anonymous or authenticated access to backend data tables before implementing owner-scoped RLS policies. An R2 bucket is not the same as a Supabase Storage bucket.
 
+## Supabase Auth identity bridge (code ready, not live)
+
+A staged NestJS bridge is implemented at `POST /api/v1/auth/supabase/exchange` for *verified Supabase access JWTs* and `POST /api/v1/auth/supabase/link` for explicit linking from a currently authenticated Breezze session. The API contacts the configured Supabase `/auth/v1/user` endpoint using a **publishable** API key, then issues Breezze's existing revocable session-family JWT. It does **not** trust editable Supabase user metadata or merge by matching email. The bridge is disabled/fails closed until `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` are both configured on the NestJS service.
+
+Prisma adds a unique `SupabaseAuthIdentity` mapping with a cascade foreign key to `User`. Supabase-managed new users have an invalid sentinel for Breezze's password hash and therefore cannot sign in using the legacy password endpoint. Existing users must link identities via a Breezze-authenticated request; an email collision returns `SUPABASE_ACCOUNT_LINK_REQUIRED` rather than taking over the account. Test coverage includes valid users, unverified email, token rejection, unrelated identity, account linking, and safe provider failures.
+
+**Do not enable a global Supabase-first login screen or migrate live sessions until a dedicated project is selected, this new mapping migration is applied and all user-flow tests pass.** The Flutter API transport supports token exchange/link, but the existing UI intentionally retains its current sign-in behavior until migration. Supabase's publishable key is not a privileged secret and may be used in clients after configured; never ship `sb_secret_...` in Flutter.
+
 ## Edge media configuration
 
 - Cloudflare R2 bucket: `breezze-media` (private, no publicly exposed R2.dev endpoint).

@@ -434,6 +434,19 @@ class BreezzeApi {
     });
   }
 
+  /// Exchange a server-verified Supabase user access token for Breezze's own
+  /// device session. Never persist this external token or use an admin API key.
+  Future<AuthResponse> exchangeSupabaseSession(String accessToken) async {
+    final response = await _post('/auth/supabase/exchange', {
+      'accessToken': accessToken,
+    });
+    return AuthResponse.fromJson(response);
+  }
+
+  /// Link a Supabase identity only while an existing Breezze user is signed in.
+  Future<Map<String, dynamic>> linkSupabaseIdentity(String accessToken) =>
+      _post('/auth/supabase/link', {'accessToken': accessToken});
+
   Future<Map<String, dynamic>> me() async => _get('/auth/me');
 
   // ---- account and sessions ----

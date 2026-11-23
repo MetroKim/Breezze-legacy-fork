@@ -248,7 +248,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                         onPressed: ready && !busy
                             ? () => _signInWith('auth0', flow as Map)
                             : null,
-                        child: const Text('Continue securely'),
+                        child: const Text('Continue with Auth0'),
                       ),
                       if (!ready) ...[
                         const SizedBox(height: 10),
@@ -362,6 +362,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                 child: const Text('Browse music'),
               ),
               const SizedBox(height: 12),
+              if (!session.usesAuth0Auth)
               FutureBuilder<Map<String, dynamic>>(
                 future: _socialProviders,
                 builder: (context, snapshot) {
@@ -414,13 +415,20 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                   );
                 },
               ),
+              if (session.usesAuth0Auth)
+                TextButton(
+                  onPressed: busy ? null : () => setState(() {
+                    _legacyFallback = false;
+                  }),
+                  child: const Text('Back to Auth0 sign-in'),
+                ),
               const SizedBox(height: 24),
               Row(
                 children: [
                   Expanded(child: Divider(color: theme.bzSeparator)),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 14),
-                    child: Text('or use email',
+                    child: Text(session.usesAuth0Auth ? 'Existing Breezze account' : 'or use email',
                         style: TextStyle(color: theme.bzText2, fontSize: 12)),
                   ),
                   Expanded(child: Divider(color: theme.bzSeparator)),
@@ -486,6 +494,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                 onPressed: _submit,
               ),
               const SizedBox(height: 22),
+              if (!session.usesAuth0Auth)
               Center(
                 child: TextButton(
                   onPressed: busy ? null : () => setState(

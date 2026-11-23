@@ -6,6 +6,7 @@ import '../../core/auth/auth_session.dart';
 import '../authentication/auth_screen.dart';
 import 'account_sign_out.dart';
 import 'change_password_screen.dart';
+import 'help_support_screen.dart';
 import '../../widgets/bz_brand_icons.dart';
 
 class AccountScreen extends ConsumerStatefulWidget {
@@ -381,6 +382,7 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                 const SizedBox(height: 28),
                 Text('SECURITY', style: theme.textTheme.labelLarge),
                 const SizedBox(height: 8),
+                if (!ref.read(authSessionProvider.notifier).usesAuth0Auth)
                 ListTile(
                   leading: const BzSvgIcon(name: 'settings'),
                   title: const Text('Change password'),
@@ -422,11 +424,24 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                   subtitle: const Text('This device or all devices'),
                   onTap: _saving ? null : () => confirmBreezzeSignOut(context, ref),
                 ),
-                OutlinedButton(
-                  onPressed: _saving ? null : _deleteAccount,
-                  style: OutlinedButton.styleFrom(foregroundColor: theme.colorScheme.error),
-                  child: const Text('Delete account'),
-                ),
+                if (ref.read(authSessionProvider.notifier).usesAuth0Auth)
+                  OutlinedButton(
+                    onPressed: _saving ? null : () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const HelpSupportScreen(),
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                        foregroundColor: theme.colorScheme.error),
+                    child: const Text('Request account deletion'),
+                  )
+                else
+                  OutlinedButton(
+                    onPressed: _saving ? null : _deleteAccount,
+                    style: OutlinedButton.styleFrom(
+                        foregroundColor: theme.colorScheme.error),
+                    child: const Text('Delete account'),
+                  ),
               ],
             ),
     );

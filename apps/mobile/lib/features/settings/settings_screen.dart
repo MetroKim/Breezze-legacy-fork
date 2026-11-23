@@ -151,7 +151,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 MaterialPageRoute(builder: (_) => const NotificationsScreen()),
               ),
             ),
-            if (auth is AuthSignedIn)
+            if (auth is AuthSignedIn &&
+                !ref.read(authSessionProvider.notifier).usesAuth0Auth)
               ListTile(
                 leading: const BzSvgIcon(name: 'settings'),
                 title: const Text('Security and password'),

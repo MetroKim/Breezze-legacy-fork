@@ -137,7 +137,7 @@ describeIntegration('Auth session PostgreSQL integration', () => {
     const oldPassword = 'integration-old-password';
     const newPassword = 'integration-new-password';
     const oldHash = await argon2.hash(oldPassword, {
-      type: argon2.argon2id, memoryCost: 4096, timeCost: 1, parallelism: 1,
+      type: argon2.argon2id, memoryCost: 4096, timeCost: 2, parallelism: 1,
     });
     await prisma.user.update({ where: { id: owner.id }, data: { passwordHash: oldHash } });
     await createRefreshToken(owner.id, randomUUID());

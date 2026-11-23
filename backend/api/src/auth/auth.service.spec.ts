@@ -147,7 +147,7 @@ describe('AuthService refresh-token rotation', () => {
 
   it('changes a password using Argon2id and revokes every session for the account', async () => {
     const oldHash = await argon2.hash('old-password-strong', {
-      type: argon2.argon2id, memoryCost: 4096, timeCost: 1, parallelism: 1,
+      type: argon2.argon2id, memoryCost: 4096, timeCost: 2, parallelism: 1,
     });
     prisma.user.findUnique.mockResolvedValue({ passwordHash: oldHash });
     await service.changePassword('user-1', 'old-password-strong', 'new-password-strong');
@@ -166,7 +166,7 @@ describe('AuthService refresh-token rotation', () => {
 
   it('rejects an incorrect current password without changing the account', async () => {
     const oldHash = await argon2.hash('old-password-strong', {
-      type: argon2.argon2id, memoryCost: 4096, timeCost: 1, parallelism: 1,
+      type: argon2.argon2id, memoryCost: 4096, timeCost: 2, parallelism: 1,
     });
     prisma.user.findUnique.mockResolvedValue({ passwordHash: oldHash });
     await expect(service.changePassword('user-1', 'bad-password', 'new-password-strong'))
@@ -177,7 +177,7 @@ describe('AuthService refresh-token rotation', () => {
 
   it('prevents simultaneous stale-password changes', async () => {
     const oldHash = await argon2.hash('old-password-strong', {
-      type: argon2.argon2id, memoryCost: 4096, timeCost: 1, parallelism: 1,
+      type: argon2.argon2id, memoryCost: 4096, timeCost: 2, parallelism: 1,
     });
     prisma.user.findUnique.mockResolvedValue({ passwordHash: oldHash });
     prisma.user.updateMany.mockResolvedValue({ count: 0 });

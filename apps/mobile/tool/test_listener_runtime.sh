@@ -68,18 +68,40 @@ wait_for_marker() {
   done
   return 1
 }
-flutter test -d "$device" integration_test/listener_runtime_test.dart --reporter expanded "${live_args[@]}" --dart-define=QA_ANDROID_MEDIA_KEYS=true >"$log" 2>&1 &
-test_pid=$!
-if wait_for_marker QA_ANDROID_MEDIA_KEYS_READY; then
-  adb -s "$device" shell input keyevent KEYCODE_HOME
-  sleep 1
-  adb -s "$device" shell dumpsys media_session | grep -F 'com.breezze.breezze'
-  adb -s "$device" shell cmd media_session dispatch pause
-  sleep 1
-  adb -s "$device" shell am start -n com.breezze.breezze/.MainActivity
-  if wait_for_marker QA_ANDROID_OS_PAUSED; then adb -s "$device" shell cmd media_session dispatch play; fi
-fi
+# A hosted Android emulator occasionally fails to attach the Flutter Dart
+# Development Service after the APK has built and installed. Retry only that
+# infrastructure startup condition once; never retry/obscure app test failures.
+run_android_once() {
+  : > "$log"
+  flutter test -d "$device" integration_test/listener_runtime_test.dart --reporter expanded "${live_args[@]}" --dart-define=QA_ANDROID_MEDIA_KEYS=true >"$log" 2>&1 &
+  test_pid=$!
+  if wait_for_marker QA_ANDROID_MEDIA_KEYS_READY; then
+    adb -s "$device" shell input keyevent KEYCODE_HOME
+    sleep 1
+    adb -s "$device" shell dumpsys media_session | grep -F 'com.breezze.breezze'
+    adb -s "$device" shell cmd media_session dispatch pause
+    sleep 1
+    adb -s "$device" shell am start -n com.breezze.breezze/.MainActivity
+    if wait_for_marker QA_ANDROID_OS_PAUSED; then
+      adb -s "$device" shell cmd media_session dispatch play
+    fi
+  fi
+  local status=0
+  wait "$test_pid" || status=$?
+  cat "$log"
+  if (( status != 0 )) && grep -q 'Failed to start Dart Development Service' "$log"; then
+    return 75
+  fi
+  return "$status"
+}
 result=0
-wait "$test_pid" || result=$?
-cat "$log"
+run_android_once || result=$?
+if (( result == 75 )); then
+  echo "QA_ANDROID_DDS_STARTUP_RETRY: emulator was running but Flutter's debug service failed to attach."
+  adb -s "$device" wait-for-device
+  sleep 5
+  result=0
+  run_android_once || result=$?
+fi
+rm -f "$log"
 exit "$result"

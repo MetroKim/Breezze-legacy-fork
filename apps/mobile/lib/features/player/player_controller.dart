@@ -696,9 +696,33 @@ class PlayerController extends Notifier<PlayerState> {
     }
   }
 
+  Future<bool> _seekNativeGaplessEntry(QueueEntry entry) async {
+    final engine = _gaplessEngine;
+    final entries = _gaplessEntries;
+    if (engine == null || entries == null) return false;
+    final index = entries.indexWhere((item) => item.entryId == entry.entryId);
+    if (index < 0) return false;
+    final generation = _requestGeneration;
+    try {
+      await _serializeEngineOperation(() async {
+        if (_isCurrentRequest(generation) && identical(_gaplessEngine, engine)) {
+          await engine.skipToIndex(index);
+        }
+      });
+      if (_isCurrentRequest(generation) && identical(_gaplessEngine, engine)) {
+        _syncNativeGaplessIndex(index);
+      }
+      return true;
+    } catch (_) {
+      _disarmNativeGapless();
+      return false;
+    }
+  }
+
   Future<void> next() async {
     final entry = _queue.advance();
     if (entry == null) return;
+    if (await _seekNativeGaplessEntry(entry)) return;
     final info = _trackInfoFor(entry.trackId) ?? TrackInfo(id: entry.trackId);
     await _resolveAndPlay(info);
   }
@@ -706,6 +730,7 @@ class PlayerController extends Notifier<PlayerState> {
   Future<void> previous() async {
     final entry = _queue.previous();
     if (entry == null) return;
+    if (await _seekNativeGaplessEntry(entry)) return;
     final info = _trackInfoFor(entry.trackId) ?? TrackInfo(id: entry.trackId);
     await _resolveAndPlay(info);
   }
@@ -774,6 +799,7 @@ class PlayerController extends Notifier<PlayerState> {
       insertedAtMs: DateTime.now().millisecondsSinceEpoch,
       trackVersion: 'v1',
     ));
+    _invalidateNativeGapless();
   }
 
   /// Appends a track to the end of the current queue.
@@ -803,6 +829,7 @@ class PlayerController extends Notifier<PlayerState> {
       insertedAtMs: DateTime.now().millisecondsSinceEpoch,
       trackVersion: 'v1',
     ));
+    _invalidateNativeGapless();
   }
 
   /// Register a Last.fm/ListenBrainz-compatible scrobbling destination.
@@ -810,8 +837,15 @@ class PlayerController extends Notifier<PlayerState> {
     _scrobbles.register(scrobbler);
   }
 
-  void toggleShuffle() => _queue.toggleShuffle();
-  void cycleRepeat() => _queue.cycleRepeat();
+  void toggleShuffle() {
+    _queue.toggleShuffle();
+    _invalidateNativeGapless();
+  }
+
+  void cycleRepeat() {
+    _queue.cycleRepeat();
+    _invalidateNativeGapless();
+  }
 
   TrackInfo? _trackInfoFor(String trackId) => _trackInfos[trackId];
 

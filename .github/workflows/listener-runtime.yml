@@ -35,7 +35,8 @@ jobs:
           profile: pixel_6
           script: bash apps/mobile/tool/test_listener_runtime.sh emulator-5554
   ios:
-    runs-on: macos-latest
+    # Avoid unreliable macos-latest Apple Silicon runner allocation.
+    runs-on: macos-15-intel
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4

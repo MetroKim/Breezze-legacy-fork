@@ -72,6 +72,8 @@ class BreezzeApi {
     var response = await send();
     if (response.statusCode == 401 &&
         path != '/auth/refresh' &&
+        path != '/auth/login' &&
+        path != '/auth/register' &&
         !path.startsWith('/auth/supabase/') &&
         path != '/auth/logout' &&
         !path.startsWith('/auth/mfa/') &&
@@ -261,23 +263,121 @@ class BreezzeApi {
 
   // ---- auth ----
 
-
-  Future<AuthResponse> exchangeSupabaseSession(String accessToken) async {
-    final result = await _post('/auth/supabase/exchange', {'accessToken': accessToken});
-    return AuthResponse.fromJson(result);
-  }
-
-  Future<AuthResponse> claimSupabaseLegacyAccount({
-    required String accessToken,
-    required String email,
-    required String legacyPassword,
+  Future<AuthResponse> register(
+    String email,
+    String password, {
+    String? displayName,
   }) async {
-    final result = await _post('/auth/supabase/claim', {
-      'accessToken': accessToken, 'email': email,
-      'legacyPassword': legacyPassword,
+    final data = await _post('/auth/register', {
+      'email': email,
+      'password': password,
+      if (displayName != null) 'displayName': displayName,
     });
-    return AuthResponse.fromJson(result);
+    return AuthResponse.fromJson(data);
   }
+
+  Future<AuthResponse> login(String email, String password) async {
+    final data = await _post('/auth/login', {
+      'email': email,
+      'password': password,
+    });
+    return AuthResponse.fromJson(data);
+  }
+
+  Future<Map<String, dynamic>> resolveCatalogTrack({
+    required String externalId,
+    required String source,
+    required String title,
+    required String artistName,
+    required int durationSec,
+  }) =>
+      _post('/catalog/resolve', {
+        'externalId': externalId,
+        'source': source,
+        'title': title,
+        'artistName': artistName,
+        'durationSec': durationSec,
+      });
+
+  Future<Map<String, dynamic>> startPlaybackSession({
+    String? trackId,
+    String? externalTrackId,
+    String? requestedQuality,
+    String? providerId,
+    String? providerTrackId,
+    String? canonicalTrackId,
+  }) =>
+      _post('/playback/sessions', {
+        if (externalTrackId != null) 'externalTrackId': externalTrackId,
+        if (trackId != null) 'trackId': trackId,
+        if (requestedQuality != null) 'requestedQuality': requestedQuality,
+        if (providerId != null) 'providerId': providerId,
+        if (providerTrackId != null) 'providerTrackId': providerTrackId,
+        if (canonicalTrackId != null) 'canonicalTrackId': canonicalTrackId,
+      });
+
+  Future<Map<String, dynamic>> playbackHeartbeat({
+    required String sessionId,
+    required String eventId,
+    required int sequence,
+  }) =>
+      _post('/playback/sessions/${Uri.encodeComponent(sessionId)}/heartbeat', {
+        'eventId': eventId,
+        'sequence': sequence,
+      });
+
+  Future<void> pausePlaybackSession(String sessionId) async {
+    await _post('/playback/sessions/${Uri.encodeComponent(sessionId)}/pause', const {});
+  }
+
+  Future<void> resumePlaybackSession(String sessionId) async {
+    await _post('/playback/sessions/${Uri.encodeComponent(sessionId)}/resume', const {});
+  }
+
+  Future<void> stopPlaybackSession(String sessionId) async {
+    await _post('/playback/sessions/${Uri.encodeComponent(sessionId)}/stop', const {});
+  }
+
+  Future<Map<String, dynamic>> resolveProviderPlayback({
+    required String providerId,
+    required String providerTrackId,
+    required String canonicalTrackId,
+    required String territory,
+  }) =>
+      _post('/playback/provider/resolve', {
+        'providerId': providerId,
+        'providerTrackId': providerTrackId,
+        'canonicalTrackId': canonicalTrackId,
+        'territory': territory,
+      });
+
+  Future<Map<String, dynamic>> resolvePlayback({
+    required String trackId,
+    required String territory,
+    String? requestedQuality,
+  }) =>
+      _post('/playback/resolve', {
+        'trackId': trackId,
+        'territory': territory,
+        if (requestedQuality != null) 'requestedQuality': requestedQuality,
+      });
+
+  Future<Map<String, dynamic>> authorizeDownload({
+    required String trackId,
+    required String territory,
+  }) =>
+      // Territory is derived by the trusted Cloudflare edge. Keep the
+      // parameter temporarily for caller compatibility, but never transmit it.
+      _post('/downloads', {
+        'trackId': trackId,
+      });
+
+  Future<Map<String, dynamic>> revalidateOfflineLease({
+    required String trackId,
+    required String territory,
+  }) =>
+      // Territory is derived by the trusted Cloudflare edge, not the client.
+      _post('/downloads/$trackId/revalidate', {});
 
   Future<AuthResponse> refresh(String refreshToken) async {
     final data = await _post('/auth/refresh', {
@@ -311,6 +411,24 @@ class BreezzeApi {
       'currentPassword': currentPassword,
       'newPassword': newPassword,
     });
+  }
+
+  Future<AuthResponse> exchangeSupabaseSession(String accessToken) async {
+    final response = await _post('/auth/supabase/exchange', {'accessToken': accessToken});
+    return AuthResponse.fromJson(response);
+  }
+
+  Future<AuthResponse> claimSupabaseLegacyAccount({
+    required String accessToken,
+    required String email,
+    required String legacyPassword,
+  }) async {
+    final response = await _post('/auth/supabase/claim', {
+      'accessToken': accessToken,
+      'email': email,
+      'legacyPassword': legacyPassword,
+    });
+    return AuthResponse.fromJson(response);
   }
 
   Future<Map<String, dynamic>> me() async => _get('/auth/me');

@@ -4,6 +4,8 @@
 
 Breezze is an independent product. It is not affiliated with or endorsed by YouTube, Google, Spotify, Apple, or another streaming service.
 
+**Architecture transition:** [Master Plan v3](docs/architecture/BREEZZE_MASTER_PLAN_V3.md) adopts Supabase Auth and an RLS-protected profile store. The existing Prisma/NestJS catalog and library remain in operation until a verified, reversible migration. Advanced DSP, video pooling, Edge Function orchestration and on-device semantic search are target workstreams, not yet completed.
+
 ## Repository layout
 
 The Flutter app in `apps/mobile`, NestJS API in `backend/api`, and Python discovery service in `backend/ytmusicapi` are the production project. The previous Kotlin client, its license and its notices are preserved in `legacy/kotlin-client/`. Run Flutter builds from `apps/mobile`.
@@ -94,6 +96,9 @@ The Flutter codebase targets Android, iOS, Web, Linux, macOS and Windows. Build 
 
 ## Documentation index
 
+- [Breezze Master Plan v3 — target architecture and migration gates](docs/architecture/BREEZZE_MASTER_PLAN_V3.md)
+- [Supabase v3 profiles and RLS schema](docs/database/BREEZZE_V3_PROFILES_RLS.sql)
+- [Supabase Flutter auth setup](apps/mobile/AUTH_SETUP.md)
 - [Product experience](docs/PRODUCT_EXPERIENCE.md)
 - [Interface contract](docs/design/BREEZZE_INTERFACE_CONTRACT.md)
 - [Integrated design and engineering architecture](docs/architecture/BREEZZE_INTEGRATED_DESIGN_ENGINEERING_ARCHITECTURE.md)

@@ -45,3 +45,28 @@ Set `API_ORIGIN` as a Wrangler variable through the Cloudflare dashboard or depl
 The NestJS API requires the same `EDGE_SHARED_SECRET` in production, so direct requests to the origin are rejected. The Worker overwrites any client-supplied `x-breezze-edge-secret` header before forwarding and removes the header from responses.
 
 The deployment workflow deploys the Worker only. The NestJS origin must already be deployed and reachable over HTTPS, and DNS/custom-domain routing plus WAF/rate-limit rules still require Cloudflare account configuration. This does not prove one-million-user capacity; staged load tests are required.
+
+## Browser/Codespaces CORS policy
+
+Configure `WEB_ALLOWED_ORIGINS` in the **Cloudflare Worker** as a
+comma-separated list of **exact** trusted frontend origins, for example a
+specific deployed web host and the specific Codespaces forwarded URL. Set the
+same origins in NestJS `CORS_ALLOWED_ORIGINS`, since the API has an independent
+origin allowlist. A development browser running at `http://127.0.0.1:8080`
+requires that exact origin in each allowlist; `http://localhost:8080` is a
+different origin. Never use a wildcard or reflect arbitrary origins with
+credentials enabled. Production defaults to no browser origins until explicitly
+configured. Both layers must be deployed for their configuration to take effect.
+
+The Worker now answers allowed preflight requests with narrowly limited
+methods and headers before the origin-secret check, and decorates successful
+**and error** API responses with CORS headers for allowed origins, so upstream
+outages do not masquerade as missing browser CORS. The backend remains the
+authority for authentication and resource authorization.
+
+The deploy workflow now accepts the repository Actions variable
+`BREEZZE_WEB_ALLOWED_ORIGINS`, maps it to the Worker variable
+`WEB_ALLOWED_ORIGINS`, and verifies a successful browser preflight after
+deployment. The protected NestJS origin must independently set
+`CORS_ALLOWED_ORIGINS` to the corresponding trusted origins. Configure exact
+hostnames only; a Codespace forwarding URL may change between instances.

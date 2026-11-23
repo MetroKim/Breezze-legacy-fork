@@ -105,8 +105,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                     ),
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 480),
-                      child: _loginPanel(context, busy: busy, error: error,
-                        socialBusy: socialBusy),
+                      child: _loginPanel(context, busy: busy, error: error),
                     ),
                   ),
                 ),

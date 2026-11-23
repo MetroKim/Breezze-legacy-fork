@@ -1,7 +1,7 @@
 import 'dart:async';
 import '../../app/appearance_controller.dart';
 import '../../app/language_controller.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_localizations/flutter_localizations.dart' as flutter_i18n;
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -147,9 +147,9 @@ class _BreezzeAppRootState extends ConsumerState<BreezzeAppRoot> with WidgetsBin
       locale: Locale(ref.watch(appLanguageProvider).valueOrNull ?? 'en'),
       supportedLocales: breezzeSupportedLocales,
       localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
+        flutter_i18n.GlobalMaterialLocalizations.delegate,
+        flutter_i18n.GlobalWidgetsLocalizations.delegate,
+        flutter_i18n.GlobalCupertinoLocalizations.delegate,
       ],
       theme: bzLightTheme(),
       darkTheme: bzDarkTheme(),

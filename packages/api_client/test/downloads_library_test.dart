@@ -186,6 +186,98 @@ void main() {
     expect(saved['assetVersion'], 'master-new');
   });
 
+  test('resumes ETag-validated partial bytes using If-Range', () async {
+    final track = BzTrack(
+      id: 'etag-resume', title: 'Etaged', artist: 'Artist',
+      duration: const Duration(minutes: 2),
+    );
+    final dir = Directory('${root.path}/etag-resume');
+    await dir.create();
+    await File('${dir.path}/audio.part').writeAsString('abc');
+    await File('${dir.path}/audio.part.version').writeAsString('etag:rev123');
+    String? ifRange;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      ifRange = request.headers.value('if-range');
+      request.response.statusCode = HttpStatus.partialContent;
+      request.response.headers.set('etag', '"rev123"');
+      request.response.headers.set('content-range', 'bytes 3-5/6');
+      request.response.contentLength = 3;
+      request.response.add(utf8.encode('def'));
+      await request.response.close();
+    });
+    addTearDown(() => server.close(force: true));
+
+    expect(await library.download(
+      track,
+      downloadUrl: 'http://${server.address.address}:${server.port}/audio',
+      ownerId: 'listener', catalogTrackId: 'etag-resume',
+    ), isTrue);
+    expect(ifRange, '"rev123"');
+    expect(await File('${dir.path}/audio.m4a').readAsString(), 'abcdef');
+    final meta = jsonDecode(await File('${dir.path}/meta.json').readAsString());
+    expect(meta['assetVersion'], 'etag:rev123');
+  });
+
+  test('replaced ETag forces full redownload instead of old/new splice', () async {
+    final track = BzTrack(
+      id: 'etag-replaced', title: 'Replaced', artist: 'Artist',
+      duration: const Duration(minutes: 2),
+    );
+    final dir = Directory('${root.path}/etag-replaced');
+    await dir.create();
+    await File('${dir.path}/audio.part').writeAsString('old-master');
+    await File('${dir.path}/audio.part.version').writeAsString('etag:old');
+    String? ifRange;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      ifRange = request.headers.value('if-range');
+      request.response.statusCode = HttpStatus.ok;
+      request.response.headers.set('etag', '"new"');
+      request.response.add(utf8.encode('replacement'));
+      await request.response.close();
+    });
+    addTearDown(() => server.close(force: true));
+
+    expect(await library.download(
+      track,
+      downloadUrl: 'http://${server.address.address}:${server.port}/audio',
+      ownerId: 'listener', catalogTrackId: 'etag-replaced',
+    ), isTrue);
+    expect(ifRange, '"old"');
+    expect(await File('${dir.path}/audio.m4a').readAsString(), 'replacement');
+  });
+
+  test('reuses completed music only after matching authorized HEAD ETag', () async {
+    final track = BzTrack(
+      id: 'etag-complete', title: 'Saved', artist: 'Artist',
+      duration: const Duration(minutes: 2),
+    );
+    final dir = Directory('${root.path}/etag-complete');
+    await dir.create();
+    await File('${dir.path}/audio.m4a').writeAsString('saved-bytes');
+    await File('${dir.path}/meta.json').writeAsString(jsonEncode({
+      'ownerId': 'listener', 'catalogTrackId': 'etag-complete',
+      'assetVersion': 'etag:stable',
+    }));
+    final methods = <String>[];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      methods.add(request.method);
+      request.response.headers.set('etag', '"stable"');
+      await request.response.close();
+    });
+    addTearDown(() => server.close(force: true));
+
+    expect(await library.download(
+      track,
+      downloadUrl: 'http://${server.address.address}:${server.port}/audio',
+      ownerId: 'listener', catalogTrackId: 'etag-complete',
+    ), isTrue);
+    expect(methods, ['HEAD']);
+    expect(await File('${dir.path}/audio.m4a').readAsString(), 'saved-bytes');
+  });
+
   test('lists only assets owned by the requested account', () async {
     final alice = Directory('${root.path}/bz_alice-track');
     final bob = Directory('${root.path}/bz_bob-track');

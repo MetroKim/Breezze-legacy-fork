@@ -523,7 +523,8 @@ class PlayerController extends Notifier<PlayerState> {
       if (queue.length >= 2 && engine is GaplessLocalQueueEngine &&
           engine.supportsGaplessLocalFiles && !_queue.shuffle &&
           _queue.repeatMode == RepeatMode.off &&
-          queue.every((item) => item.localFilePath != null &&
+          queue.every((item) => item.id.startsWith('device:') &&
+              item.localFilePath != null &&
               item.localFilePath!.isNotEmpty &&
               !item.localFilePath!.startsWith('content://'))) {
         await _resolveAndPlayLocalPlaylist(

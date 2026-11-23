@@ -6,7 +6,7 @@ import worker from '../src/index.ts';
 const baseEnv = {
   MEDIA_SIGNING_KEY: 'breezze-test-key-that-is-long-enough',
   SUPABASE_URL: 'https://breezze-test.supabase.co',
-  SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key-keep-private',
+  SUPABASE_SECRET_KEY: 'test-service-role-key-keep-private',
   SUPABASE_MEDIA_BUCKET: 'breezze-media',
 };
 
@@ -43,7 +43,7 @@ async function withUpstream(response, work) {
 test('missing Supabase configuration fails closed', async () => {
   const response = await worker.fetch(signedRequest(), {
     ...baseEnv,
-    SUPABASE_SERVICE_ROLE_KEY: '',
+    SUPABASE_SECRET_KEY: '',
   });
   assert.equal(response.status, 503);
 });
@@ -77,7 +77,7 @@ test('authorized audio is read from a private Supabase bucket; no secret leaks',
     assert.equal(calls.length, 1);
     assert.equal(calls[0].url,
       'https://breezze-test.supabase.co/storage/v1/object/authenticated/breezze-media/audio/track-1/AAC_256');
-    assert.equal(calls[0].options.headers.get('apikey'), baseEnv.SUPABASE_SERVICE_ROLE_KEY);
+    assert.equal(calls[0].options.headers.get('apikey'), baseEnv.SUPABASE_SECRET_KEY);
     assert.equal(calls[0].options.redirect, 'manual');
   }));
 

@@ -6,7 +6,7 @@
 export interface Env {
   MEDIA_SIGNING_KEY: string;
   SUPABASE_URL: string;
-  SUPABASE_SERVICE_ROLE_KEY: string;
+  SUPABASE_SECRET_KEY: string;
   SUPABASE_MEDIA_BUCKET?: string;
 }
 
@@ -114,8 +114,7 @@ async function playback(request: Request, url: URL, env: Env): Promise<Response>
   const objectPath = `/storage/v1/object/authenticated/${bucket}/audio/${trackId}/${variant}`;
   const upstreamUrl = new URL(objectPath, origin);
   const headers = new Headers({
-    apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-    Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+    apikey: env.SUPABASE_SECRET_KEY,
   });
   if (range) headers.set('Range', range);
   const ifRange = request.headers.get('If-Range');
@@ -170,7 +169,7 @@ async function playback(request: Request, url: URL, env: Env): Promise<Response>
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (!env.MEDIA_SIGNING_KEY || !env.SUPABASE_URL ||
-        !env.SUPABASE_SERVICE_ROLE_KEY) {
+        !env.SUPABASE_SECRET_KEY) {
       return error(503, 'SUPABASE_STORAGE_NOT_CONFIGURED');
     }
     const url = new URL(request.url);

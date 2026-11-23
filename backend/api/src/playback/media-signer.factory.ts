@@ -23,14 +23,23 @@ export class MediaSignerFactory {
       if (parsedCdnUrl.protocol !== 'https:') {
         throw new Error('CDN_BASE_URL_MUST_USE_HTTPS');
       }
+      // Supabase Edge Functions live at a fixed path, unlike Worker origins.
+      // Accept only the exact Breezze media endpoint on a Supabase-managed host.
+      const usingSupabase = process.env.MEDIA_BACKEND === 'supabase';
+      const validPath = usingSupabase
+        ? parsedCdnUrl.pathname === '/functions/v1/media'
+          && /^[a-z0-9-]+\.supabase\.co$/.test(parsedCdnUrl.hostname)
+        : parsedCdnUrl.pathname === '/';
       if (
-        parsedCdnUrl.pathname !== '/' ||
+        !validPath ||
         parsedCdnUrl.search ||
         parsedCdnUrl.hash ||
         parsedCdnUrl.username ||
         parsedCdnUrl.password
       ) {
-        throw new Error('CDN_BASE_URL_MUST_BE_ORIGIN_ONLY');
+        throw new Error(usingSupabase
+          ? 'SUPABASE_MEDIA_ENDPOINT_INVALID'
+          : 'CDN_BASE_URL_MUST_BE_ORIGIN_ONLY');
       }
     }
 

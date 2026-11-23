@@ -1,0 +1,8 @@
+# Local project ID is only a development alias; do not treat it as
+# the hosted Supabase project reference or deploy without linking the project.
+project_id = "breezze"
+
+[functions.media]
+# Authorization is the short-lived, rights-gated Breezze HMAC signature
+# verified by the function itself, not a Supabase Auth user session JWT.
+verify_jwt = false

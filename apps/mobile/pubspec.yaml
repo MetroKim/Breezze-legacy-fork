@@ -46,6 +46,11 @@ dependencies:
   youtube_player_iframe: 5.2.2
   connectivity_plus: ^6.1.0
   flutter_secure_storage: ^9.2.4
+  # One auth authority on every platform; Google/Apple use native sheets.
+  supabase_flutter: 2.18.3
+  google_sign_in: 7.2.0
+  sign_in_with_apple: 8.1.0
+  crypto: ^3.0.6
 
   # App-private storage locations
   path_provider: ^2.1.3

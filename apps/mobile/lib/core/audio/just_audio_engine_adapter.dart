@@ -7,7 +7,7 @@ import 'package:just_audio/just_audio.dart' as ja;
 
 /// Native audio engine — implements the Breezze engine contract over
 /// just_audio, which wraps ExoPlayer (Android) and AVFoundation (iOS).
-class JustAudioEngineAdapter implements AudioEngineAdapter {
+class JustAudioEngineAdapter implements AudioEngineAdapter, GaplessLocalQueueEngine {
   final ja.AudioPlayer _player = ja.AudioPlayer(handleInterruptions: false);
   final StreamController<PlaybackState> _states =
       StreamController<PlaybackState>.broadcast();
@@ -90,6 +90,38 @@ class JustAudioEngineAdapter implements AudioEngineAdapter {
       await _player.setUrl(source.streamUrl);
     }
   }
+
+  /// A native playlist is safe only for local sources. Licensed streams
+  /// have per-track rights, grant expiries and heartbeat sessions.
+  @override
+  Future<void> prepareLocalPlaylist(
+    List<PlayableSource> sources, {
+    required int initialIndex,
+  }) async {
+    if (sources.length < 2 || initialIndex < 0 ||
+        initialIndex >= sources.length ||
+        sources.any((source) => !source.isLocal ||
+            source.streamUrl.isEmpty ||
+            source.streamUrl.startsWith('content://'))) {
+      throw ArgumentError('Gapless playlist requires local files only');
+    }
+    await _player.setAudioSource(
+      ja.ConcatenatingAudioSource(
+        children: [
+          for (final source in sources) ja.AudioSource.file(source.streamUrl),
+        ],
+        useLazyPreparation: false,
+      ),
+      initialIndex: initialIndex,
+    );
+  }
+
+  @override
+  Stream<int?> get currentIndexStream => _player.currentIndexStream;
+
+  @override
+  Future<void> skipToIndex(int index) =>
+      _player.seek(Duration.zero, index: index);
 
   @override
   Future<void> play() => _player.play();

@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../api/breezze_api.dart';
 import 'pending_logout_queue.dart';
 import 'supabase_auth_transport.dart';
+import 'native_social_sign_in.dart';
 import '../../features/player/player_controller.dart';
 
 /// Auth session state — what the UI renders.
@@ -70,6 +71,7 @@ class AuthError extends AuthState {
 class AuthSessionController extends Notifier<AuthState> {
   Future<bool>? _refreshInFlight;
   String? _pendingSupabaseAccessToken;
+  late final NativeSocialSignIn _nativeSocialSignIn = NativeSocialSignIn();
   static const _refreshTokenKey = 'breezze.refresh_token';
   static const _secureStorage = FlutterSecureStorage();
   late final PendingLogoutQueue _pendingLogouts =
@@ -87,6 +89,9 @@ class AuthSessionController extends Notifier<AuthState> {
     defaultValue: 'sb_publishable_ZloCmmQPo86OqHbH3Yqgsw_xZGPqSi3',
   );
   bool get usesSupabaseAuth => true;
+
+  bool socialProviderAvailable(String provider) =>
+      _nativeSocialSignIn.available(provider);
 
   late final SupabaseAuthTransport _supabase = SupabaseAuthTransport(
     projectUrl: _supabaseUrl,
@@ -254,6 +259,38 @@ class AuthSessionController extends Notifier<AuthState> {
     }
   }
 
+  /// Google / Apple are the primary Breezze login choices. The platform
+  /// prompt stays native and Supabase is the only identity authority.
+  Future<void> signInWithSocial(String provider) async {
+    _pendingSupabaseAccessToken = null;
+    state = const AuthSigningIn(social: true);
+    try {
+      final credential = await _nativeSocialSignIn.authenticate(provider);
+      final token = await _supabase.signInWithIdToken(
+        provider: credential.provider,
+        idToken: credential.idToken,
+        nonce: credential.nonce,
+      );
+      _pendingSupabaseAccessToken = token;
+      await _persistSession(await _api.exchangeSupabaseSession(token));
+      _pendingSupabaseAccessToken = null;
+    } on NativeSocialSignInException catch (e) {
+      _pendingSupabaseAccessToken = null;
+      state = AuthError(e.code);
+    } on SupabaseAuthTransportException catch (e) {
+      _pendingSupabaseAccessToken = null;
+      state = AuthError(e.code);
+    } on BreezzeApiException catch (e) {
+      if (e.code != 'SUPABASE_ACCOUNT_LINK_REQUIRED') {
+        _pendingSupabaseAccessToken = null;
+      }
+      state = AuthError(e.code);
+    } catch (_) {
+      _pendingSupabaseAccessToken = null;
+      state = const AuthError('SOCIAL_AUTH_FAILED');
+    }
+  }
+
   Future<void> requestPasswordReset(String email) =>
       _supabase.requestPasswordReset(email);
 
@@ -313,7 +350,6 @@ class AuthSessionController extends Notifier<AuthState> {
     // If offline, preserve the current session and surface the error rather
     // than pretending other devices were signed out.
     if (allDevices) await _api.logoutAllSessions();
-    ++_socialAttempt;
     // Stop the global player while the access token is still valid so its
     // server-authorized playback session is closed before account logout.
     try {

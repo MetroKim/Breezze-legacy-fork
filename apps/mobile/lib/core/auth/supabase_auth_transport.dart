@@ -75,6 +75,34 @@ class SupabaseAuthTransport {
     return token;
   }
 
+  /// Native provider identity token, exchanged only with the configured
+  /// Supabase Auth origin. No Google/Apple token is persisted on device.
+  Future<String> signInWithIdToken({
+    required String provider,
+    required String idToken,
+    String? nonce,
+  }) async {
+    if (provider != 'google' && provider != 'apple') {
+      throw const SupabaseAuthTransportException('INVALID_PROVIDER');
+    }
+    if (idToken.isEmpty || idToken.length > 16000) {
+      throw const SupabaseAuthTransportException('SOCIAL_TOKEN_INVALID');
+    }
+    final result = await _send(
+      _endpoint('/token', {'grant_type': 'id_token'}),
+      {
+        'provider': provider,
+        'id_token': idToken,
+        if (nonce != null) 'nonce': nonce,
+      },
+    );
+    final token = result['access_token'];
+    if (token is! String || token.isEmpty) {
+      throw const SupabaseAuthTransportException('SUPABASE_AUTH_INVALID_RESPONSE');
+    }
+    return token;
+  }
+
   /// The reset message has a link to the approved Breezze recovery page.
   /// The response deliberately does not reveal whether an email exists.
   Future<void> requestPasswordReset(String email) async {

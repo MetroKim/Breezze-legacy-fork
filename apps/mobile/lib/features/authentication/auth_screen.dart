@@ -28,6 +28,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   bool _mfaBusy = false;
   bool _revealOldPassword = false;
   bool _resetBusy = false;
+  bool _socialBusy = false;
   String? _mfaError;
 
   @override
@@ -62,6 +63,16 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
       }
     } else {
       await controller.login(_email.text.trim(), _password.text);
+    }
+  }
+
+  Future<void> _signInWithSocial(String provider) async {
+    if (_socialBusy) return;
+    setState(() => _socialBusy = true);
+    try {
+      await ref.read(authSessionProvider.notifier).signInWithSocial(provider);
+    } finally {
+      if (mounted) setState(() => _socialBusy = false);
     }
   }
 
@@ -212,6 +223,38 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                     ),
                   )),
                   child: const Text('Browse music'),
+                ),
+                const SizedBox(height: 18),
+                // Real native provider prompts; Supabase Auth is the sole
+                // identity authority. No extra authentication theme or WebView.
+                OutlinedButton.icon(
+                  onPressed: busy || _socialBusy ||
+                      !ref.read(authSessionProvider.notifier)
+                          .socialProviderAvailable('google')
+                      ? null : () => _signInWithSocial('google'),
+                  icon: const BzSvgIcon(name: 'google', size: 20),
+                  label: const Text('Continue with Google'),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: busy || _socialBusy ||
+                      !ref.read(authSessionProvider.notifier)
+                          .socialProviderAvailable('apple')
+                      ? null : () => _signInWithSocial('apple'),
+                  icon: const BzSvgIcon(name: 'apple', size: 20),
+                  label: const Text('Continue with Apple'),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(child: Divider(color: theme.bzSeparator)),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      child: Text('or use email',
+                        style: TextStyle(color: theme.bzText2, fontSize: 12)),
+                    ),
+                    Expanded(child: Divider(color: theme.bzSeparator)),
+                  ],
                 ),
                 const SizedBox(height: 24),
                 AutofillGroup(
@@ -593,6 +636,13 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
         return 'Existing-account migration is not enabled yet.';
       case 'SUPABASE_CLAIM_NOT_READY':
         return 'Sign in with Supabase first, then restore your library.';
+      case 'SOCIAL_PROVIDER_NOT_CONFIGURED':
+        return 'This sign-in option needs provider configuration.';
+      case 'SOCIAL_PLATFORM_UNSUPPORTED':
+        return 'This sign-in option is not available on this device.';
+      case 'SOCIAL_TOKEN_INVALID':
+      case 'SOCIAL_AUTH_FAILED':
+        return 'Secure sign-in did not finish. Please try again.';
       case 'SUPABASE_AUTH_NOT_CONFIGURED':
         return 'Breezze sign-in is not configured yet.';
       case 'SUPABASE_AUTH_UNAVAILABLE':

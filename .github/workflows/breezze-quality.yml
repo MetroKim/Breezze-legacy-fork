@@ -179,7 +179,9 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          cache: true
+          # Native builds passed but the hosted runner cancelled during the
+          # large Flutter SDK cache-upload post action. Caching is optional.
+          cache: false
 
       - name: Generate platform runners
         working-directory: apps/mobile

@@ -102,14 +102,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         followedTracks = shelves[0];
         madeForYou = shelves[1];
       } catch (_) {
-            // A track can become unavailable between ranking and display.
-            return null;
-          }
-        }));
-        madeForYou = resolved.whereType<TrackInfo>()
-            .where((track) => track.title?.isNotEmpty == true)
-            .toList(growable: false);
-      } catch (_) {
         // Personalized content is optional; local listening history remains.
       }
       try {
@@ -205,6 +197,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         _recentlyPlayed = [];
         _favorites = [];
         _madeForYou = [];
+        _fromFollowedArtists = [];
         _replay = null;
         _loading = true;
       });

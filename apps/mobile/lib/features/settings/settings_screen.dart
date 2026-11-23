@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/download_preferences.dart';
 import '../../app/appearance_controller.dart';
 import '../../app/language_controller.dart';
+import '../../app/breezze_ui_strings.dart';
 import '../../app/search_history_store.dart';
 import '../../core/auth/auth_session.dart';
 import 'account_screen.dart';
@@ -197,7 +198,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       child: ListView(
         padding: EdgeInsets.fromLTRB(16, 24, 16, BzBreakpoints.bottomClearance(context, compact: 220)),
         children: [
-          Text('Settings', style: theme.textTheme.displayMedium),
+          Text(breezzeText(Localizations.localeOf(context).languageCode, 'Settings'), style: theme.textTheme.displayMedium),
           const SizedBox(height: 16),
           _section(theme, 'Account', [
             ListTile(
@@ -450,7 +451,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
             ListTile(
               leading: const BzSvgIcon(name: 'globe'),
-              title: const Text('App language'),
+              title: Text(breezzeText(Localizations.localeOf(context).languageCode, 'App language')),
               subtitle: Text(breezzeLanguageName(
                 ref.watch(appLanguageProvider).valueOrNull ?? 'en')),
               trailing: const Icon(Icons.chevron_right),

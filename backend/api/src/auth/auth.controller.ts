@@ -98,6 +98,14 @@ export class AuthController {
     return this.auth.logout(dto.refreshToken);
   }
 
+  @Post('logout-all')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  async logoutAllDevices(@CurrentUser() userId: string) {
+    await this.auth.revokeAllSessions(userId);
+    return { revoked: true };
+  }
+
   @Post('mfa/setup')
   @Header('Cache-Control', 'private, no-store')
   @UseGuards(JwtAuthGuard)

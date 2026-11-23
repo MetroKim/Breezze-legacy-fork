@@ -11,7 +11,9 @@ import '../../widgets/bz_brand_icons.dart';
 /// Auth screen — login + register in one premium glass card, wired to
 /// the real backend session controller.
 class AuthScreen extends ConsumerStatefulWidget {
-  const AuthScreen({super.key});
+  const AuthScreen({super.key, this.startInRegisterMode = false});
+
+  final bool startInRegisterMode;
 
   @override
   ConsumerState<AuthScreen> createState() => _AuthScreenState();
@@ -31,6 +33,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   @override
   void initState() {
     super.initState();
+    _registerMode = widget.startInRegisterMode;
     _socialProviders = _prepareSocialFlows();
   }
 
@@ -103,6 +106,17 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<AuthState>(authSessionProvider, (previous, next) {
+      if (next is AuthSignedIn) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          final navigator = Navigator.of(context);
+          // Auth can also be the root onboarding route, which is replaced by
+          // the signed-in shell; only pop when it was opened as a subroute.
+          if (navigator.canPop()) navigator.popUntil((route) => route.isFirst);
+        });
+      }
+    });
     final theme = Theme.of(context);
     final auth = ref.watch(authSessionProvider);
     final busy = auth is AuthSigningIn;

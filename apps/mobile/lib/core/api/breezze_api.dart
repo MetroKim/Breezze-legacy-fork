@@ -415,6 +415,10 @@ class BreezzeApi {
     await _post('/auth/logout', {'refreshToken': refreshToken});
   }
 
+  Future<void> logoutAllSessions() async {
+    await _post('/auth/logout-all', const <String, dynamic>{});
+  }
+
   Future<Map<String, dynamic>> me() async => _get('/auth/me');
 
   // ---- account and sessions ----

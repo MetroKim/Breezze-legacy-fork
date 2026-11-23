@@ -3,6 +3,8 @@ import 'package:breezze_design_system/breezze_design_system.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/auth/auth_session.dart';
+import '../authentication/auth_screen.dart';
+import 'account_sign_out.dart';
 import '../../widgets/bz_brand_icons.dart';
 
 class AccountScreen extends ConsumerStatefulWidget {
@@ -41,6 +43,12 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
   }
 
   Future<void> _load() async {
+    final initialAuth = ref.read(authSessionProvider);
+    if (initialAuth is! AuthSignedIn) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
+    final ownerId = initialAuth.userId;
     setState(() {
       _loading = true;
       _error = null;
@@ -48,7 +56,9 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
     try {
       final api = ref.read(authSessionProvider.notifier).api;
       final results = await Future.wait([api.profile(), api.sessions()]);
-      if (!mounted) return;
+      final latestAuth = ref.read(authSessionProvider);
+      if (!mounted || latestAuth is! AuthSignedIn ||
+          latestAuth.userId != ownerId) return;
       final profile = results[0] as Map<String, dynamic>;
       final preference = profile['preference'] is Map
           ? Map<String, dynamic>.from(profile['preference'] as Map)
@@ -67,7 +77,9 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
         _loading = false;
       });
     } catch (_) {
-      if (!mounted) return;
+      final latestAuth = ref.read(authSessionProvider);
+      if (!mounted || latestAuth is! AuthSignedIn ||
+          latestAuth.userId != ownerId) return;
       setState(() {
         _loading = false;
         _error = 'Account details could not be loaded. Check your connection and retry.';
@@ -184,9 +196,67 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
     }
   }
 
+  Widget _signedOutGateway(ThemeData theme) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Account')),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(24, 36, 24, 36),
+          children: [
+            Center(child: BzBnoteMark(size: 72, color: theme.bzText1)),
+            const SizedBox(height: 24),
+            Text('Your music, your account',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.headlineMedium),
+            const SizedBox(height: 12),
+            Text('Sign in to sync your library and playlists across devices. '
+                'Breezze also lets you explore the public catalogue without an account.',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(color: theme.bzText2)),
+            const SizedBox(height: 28),
+            FilledButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const AuthScreen())),
+              child: const Text('Sign in'),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const AuthScreen(startInRegisterMode: true))),
+              child: const Text('Create account'),
+            ),
+            const SizedBox(height: 16),
+            TextButton(
+              onPressed: () => Navigator.of(context).maybePop(),
+              child: const Text('Continue without an account'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    ref.listen<AuthState>(authSessionProvider, (previous, next) {
+      final before = previous is AuthSignedIn ? previous.userId : null;
+      final after = next is AuthSignedIn ? next.userId : null;
+      if (before == after) return;
+      if (next is AuthSignedIn) {
+        _load();
+      } else {
+        setState(() {
+          _email = null;
+          _sessions = const [];
+          _error = null;
+          _loading = false;
+        });
+      }
+    });
     final theme = Theme.of(context);
+    if (ref.watch(authSessionProvider) is! AuthSignedIn) {
+      return _signedOutGateway(theme);
+    }
     return Scaffold(
       appBar: AppBar(
         title: const Text('Account'),
@@ -288,6 +358,12 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                       ),
                     ),
                 const SizedBox(height: 28),
+                ListTile(
+                  leading: const BzSvgIcon(name: 'logout'),
+                  title: const Text('Sign out'),
+                  subtitle: const Text('This device or all devices'),
+                  onTap: _saving ? null : () => confirmBreezzeSignOut(context, ref),
+                ),
                 OutlinedButton(
                   onPressed: _saving ? null : _deleteAccount,
                   style: OutlinedButton.styleFrom(foregroundColor: theme.colorScheme.error),

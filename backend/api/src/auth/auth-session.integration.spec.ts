@@ -109,4 +109,25 @@ describeIntegration('Auth session PostgreSQL integration', () => {
     });
     expect(stored.revokedAt).toBeNull();
   });
+  it('signs out every device for one account while keeping other users active', async () => {
+    const owner = await createUser();
+    const other = await createUser();
+    const familyA = randomUUID();
+    const familyB = randomUUID();
+    const foreignFamily = randomUUID();
+    await createRefreshToken(owner.id, familyA);
+    await createRefreshToken(owner.id, familyB);
+    await createRefreshToken(other.id, foreignFamily);
+
+    await service.revokeAllSessions(owner.id);
+
+    const ownerTokens = await prisma.refreshToken.findMany({ where: { userId: owner.id } });
+    const otherTokens = await prisma.refreshToken.findMany({ where: { userId: other.id } });
+    expect(ownerTokens).toHaveLength(2);
+    expect(ownerTokens.every((row) => row.revokedAt !== null)).toBe(true);
+    expect(otherTokens).toHaveLength(1);
+    expect(otherTokens.every((row) => row.revokedAt === null)).toBe(true);
+  });
+
+
 });

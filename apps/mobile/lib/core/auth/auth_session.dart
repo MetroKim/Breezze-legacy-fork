@@ -293,7 +293,11 @@ class AuthSessionController extends Notifier<AuthState> {
     }
   }
 
-  Future<void> signOut() async {
+  Future<void> signOut({bool allDevices = false}) async {
+    // All-device revocation needs an acknowledged authenticated request.
+    // If offline, preserve the current session and surface the error rather
+    // than pretending other devices were signed out.
+    if (allDevices) await _api.logoutAllSessions();
     ++_socialAttempt;
     // Stop the global player while the access token is still valid so its
     // server-authorized playback session is closed before account logout.
@@ -304,7 +308,7 @@ class AuthSessionController extends Notifier<AuthState> {
     try {
       refreshToken = await _secureStorage.read(key: _refreshTokenKey);
     } catch (_) {}
-    if (refreshToken != null) {
+    if (!allDevices && refreshToken != null) {
       try {
         await _api.logout(refreshToken);
       } catch (_) {

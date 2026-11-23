@@ -429,6 +429,17 @@ export class AuthService {
     });
   }
 
+  /** Invalidate every active refresh-token family owned by this user.
+   * JWT strategy checks active session families, so already-issued access
+   * tokens stop working on the next authenticated API request.
+   */
+  async revokeAllSessions(userId: string): Promise<void> {
+    await this.prisma.refreshToken.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+  }
+
   async profile(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },

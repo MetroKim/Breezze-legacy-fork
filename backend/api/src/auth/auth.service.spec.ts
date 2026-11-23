@@ -132,6 +132,14 @@ describe('AuthService refresh-token rotation', () => {
     expect(prisma.refreshToken.updateMany).not.toHaveBeenCalled();
   });
 
+  it('revokes all active sessions for the requesting user without touching other accounts', async () => {
+    await service.revokeAllSessions('user-1');
+    expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: { userId: 'user-1', revokedAt: null },
+      data: { revokedAt: expect.any(Date) },
+    });
+  });
+
   it('revokes the complete family when logging out', async () => {
     prisma.refreshToken.findUnique.mockResolvedValue({
       familyId: 'family-1',

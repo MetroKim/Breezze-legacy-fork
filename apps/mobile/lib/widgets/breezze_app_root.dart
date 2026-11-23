@@ -162,12 +162,16 @@ class _BreezzeAppRootState extends ConsumerState<BreezzeAppRoot> with WidgetsBin
             );
           }
 
-          if (auth is AuthSignedIn) {
+          // Signed-out listeners can browse the free public catalogue and
+          // reach the account gateway without being forced through sign-in.
+          // Backend-owned libraries and downloads remain session-scoped.
+          if (auth is AuthSignedIn || auth is AuthSignedOut ||
+              auth is AuthError || auth is AuthSigningIn) {
             final shell = KeyedSubtree(
               key: _shellKey,
               child: const BreezzeShell(),
             );
-            if (_showOnboarding) {
+            if (auth is AuthSignedIn && _showOnboarding) {
               return Stack(
                 children: [
                   shell,

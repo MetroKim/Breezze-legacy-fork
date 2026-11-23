@@ -46,6 +46,16 @@ class AuthError extends AuthState {
   const AuthError(this.code);
 }
 
+class AuthPasswordResetSent extends AuthState {
+  final String email;
+  const AuthPasswordResetSent(this.email);
+}
+
+class AuthPasswordRecovery extends AuthState {
+  final String? error;
+  const AuthPasswordRecovery({this.error});
+}
+
 class AuthSessionController extends Notifier<AuthState> {
   static const _configuredApiUrl = String.fromEnvironment('BREEZZE_API_URL');
   static const _productionApiUrl =
@@ -95,7 +105,16 @@ class AuthSessionController extends Notifier<AuthState> {
 
   Future<void> restoreSession() async {
     _sessionListener ??= _client.auth.onAuthStateChange.listen(
-      (event) => _applySession(event.session),
+      (event) {
+        if (event.event == supa.AuthChangeEvent.passwordRecovery) {
+          // The recovery link establishes a temporary authenticated session.
+          // Require the user to choose a new password before continuing.
+          _api.accessToken = event.session?.accessToken;
+          state = const AuthPasswordRecovery();
+        } else if (state is! AuthPasswordRecovery) {
+          _applySession(event.session);
+        }
+      },
       onError: (Object _) {
         // Network failures do not destroy an otherwise valid local session.
       },
@@ -169,6 +188,46 @@ class AuthSessionController extends Notifier<AuthState> {
       state = AuthError(_authError(error));
     } catch (_) {
       state = const AuthError('NETWORK_ERROR');
+    }
+  }
+
+  /// Send a reset link; the secure app callback enters recovery mode.
+  Future<void> requestPasswordReset(String email) async {
+    final address = email.trim();
+    if (!address.contains('@') || !address.contains('.')) {
+      state = const AuthError('EMAIL_REQUIRED');
+      return;
+    }
+    state = const AuthSigningIn();
+    try {
+      await _client.auth.resetPasswordForEmail(
+        address,
+        redirectTo: kIsWeb ? Uri.base.origin : _callback,
+      );
+      state = AuthPasswordResetSent(address);
+    } on supa.AuthException catch (error) {
+      state = AuthError(_authError(error));
+    } catch (_) {
+      state = const AuthError('NETWORK_ERROR');
+    }
+  }
+
+  /// Only invoked after Supabase reports a password-recovery callback.
+  Future<void> finishPasswordRecovery(String newPassword) async {
+    if (state is! AuthPasswordRecovery) return;
+    if (newPassword.length < 8) {
+      state = const AuthPasswordRecovery(error: 'Use at least 8 characters.');
+      return;
+    }
+    try {
+      await _client.auth.updateUser(
+        supa.UserAttributes(password: newPassword),
+      );
+      _applySession(_client.auth.currentSession);
+    } catch (_) {
+      state = const AuthPasswordRecovery(
+        error: 'Password could not be updated. Please retry.',
+      );
     }
   }
 

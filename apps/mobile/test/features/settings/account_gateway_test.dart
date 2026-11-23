@@ -1,5 +1,6 @@
 import 'package:breezze/core/auth/auth_session.dart';
 import 'package:breezze/features/settings/account_screen.dart';
+import 'package:breezze_design_system/breezze_design_system.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -17,7 +18,10 @@ void main() {
         overrides: [
           authSessionProvider.overrideWith(_GuestAuthSession.new),
         ],
-        child: const MaterialApp(home: AccountScreen()),
+        child: MaterialApp(
+          theme: bzLightTheme(),
+          home: const AccountScreen(),
+        ),
       ),
     );
     await tester.pump();

@@ -95,6 +95,93 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
       );
     }
 
+    if (auth is AuthPasswordResetSent) {
+      return Scaffold(
+        backgroundColor: theme.bzBackground,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                BzRibbonLogo(width: 150, color: theme.bzText1),
+                const SizedBox(height: 22),
+                Text('Check your email',
+                    style: theme.textTheme.headlineMedium),
+                const SizedBox(height: 12),
+                Text(
+                  'If ${auth.email} belongs to a Breezze account, a password '
+                  'reset link will arrive shortly.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                TextButton(
+                  onPressed: () => ref
+                      .read(authSessionProvider.notifier).resetToSignedOut(),
+                  child: const Text('Back to sign in'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (auth is AuthPasswordRecovery) {
+      return Scaffold(
+        backgroundColor: theme.bzBackground,
+        body: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(28),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 440),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  BzRibbonLogo(width: 150, color: theme.bzText1),
+                  const SizedBox(height: 24),
+                  Text('Choose a new password',
+                      style: theme.textTheme.headlineMedium),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _password,
+                    obscureText: !_revealPassword,
+                    autofillHints: const [AutofillHints.newPassword],
+                    decoration: InputDecoration(
+                      labelText: 'New password',
+                      suffixIcon: IconButton(
+                        tooltip: _revealPassword
+                            ? 'Hide password' : 'Show password',
+                        onPressed: () => setState(() {
+                          _revealPassword = !_revealPassword;
+                        }),
+                        icon: Icon(_revealPassword
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined),
+                      ),
+                    ),
+                  ),
+                  if (auth.error != null) ...[
+                    const SizedBox(height: 12),
+                    Text(auth.error!,
+                        style: TextStyle(color: theme.colorScheme.error)),
+                  ],
+                  const SizedBox(height: 24),
+                  FilledButton(
+                    onPressed: () => ref
+                        .read(authSessionProvider.notifier)
+                        .finishPasswordRecovery(_password.text),
+                    child: const Text('Update password'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     final desktop = MediaQuery.sizeOf(context).width >= 980;
     return Scaffold(
       backgroundColor: theme.bzBackground,
@@ -263,6 +350,18 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                   ],
                 ),
               ),
+              if (!_registerMode)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: busy
+                        ? null
+                        : () => ref
+                            .read(authSessionProvider.notifier)
+                            .requestPasswordReset(_email.text),
+                    child: const Text('Forgot password?'),
+                  ),
+                ),
               if (error != null) ...[
                 const SizedBox(height: 12),
                 Semantics(
@@ -405,6 +504,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
 
   String _errorText(String code) {
     switch (code) {
+      case 'EMAIL_REQUIRED':
+        return 'Enter your email address to reset your password.';
       case 'INVALID_CREDENTIALS':
         return 'Wrong email or password.';
       case 'PASSWORD_TOO_SHORT':

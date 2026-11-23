@@ -149,6 +149,8 @@ class DownloadsLibrary {
               response.statusCode == HttpStatus.partialContent &&
               responseVersion != storedVersion) {
             await response.drain<void>();
+            if (await partialFile.exists()) await partialFile.delete();
+            if (await versionFile.exists()) await versionFile.delete();
             throw const HttpException('resumed_asset_etag_mismatch');
           }
           if (assetVersion == null && responseVersion != null) {

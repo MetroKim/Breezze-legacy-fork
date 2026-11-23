@@ -78,6 +78,23 @@ abstract interface class AudioEngineAdapter {
   Stream<PlaybackState> get engineStateStream;
 }
 
+/// Optional native playlist capability. This is deliberately separate from
+/// AudioEngineAdapter: licensed remote streams still require per-track
+/// playback sessions, and cannot be speculatively stitched into a playlist.
+abstract interface class GaplessLocalQueueEngine {
+  /// All sources must be app-private/user-controlled local audio files.
+  Future<void> prepareLocalPlaylist(
+    List<PlayableSource> sources, {
+    required int initialIndex,
+  });
+
+  /// Native sequence index changes without resetting the decoder.
+  Stream<int?> get currentIndexStream;
+
+  /// Seeks within an already prepared native playlist.
+  Future<void> skipToIndex(int index);
+}
+
 /// Queue entries must have stable IDs, source context, version and
 /// origin (§53.4) — they are NOT bare track references.
 class QueueEntry {

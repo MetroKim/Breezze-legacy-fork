@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/main_tab.dart';
+import '../../app/breezze_ui_strings.dart';
 
 import '../../app/bootstrap.dart';
 import '../../app/recent_store.dart';
@@ -311,7 +312,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ],
           if (!_loading && _fromFollowedArtists.isNotEmpty) ...[
             _Rail(
-              title: 'From Artists You Follow',
+              title: breezzeText(Localizations.localeOf(context).languageCode, 'From Artists You Follow'),
               tracks: _fromFollowedArtists,
               onPlay: _play,
             ),
@@ -319,7 +320,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ],
           if (!_loading && _madeForYou.isNotEmpty) ...[
             _Rail(
-              title: 'Made for You',
+              title: breezzeText(Localizations.localeOf(context).languageCode, 'Made for You'),
               tracks: _madeForYou,
               onPlay: _play,
             ),

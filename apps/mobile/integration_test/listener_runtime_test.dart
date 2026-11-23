@@ -108,5 +108,32 @@ void main() {
           current().duration.inSeconds >= 25 && current().duration.inSeconds <= 35);
       debugPrint('Verified live preview on native decoder');
     }
+
+    // One native playlist must transition locally without creating a new
+    // decoder or requesting a separate remote playback authorization.
+    final nextFile = File('${root.path}/gapless-next.m4a');
+    await nextFile.writeAsBytes(bytes);
+    await player.playTrack(
+      trackId: 'qa-gapless-a',
+      queue: [
+        TrackInfo(
+          id: 'qa-gapless-a', title: 'First local',
+          localFilePath: saved.audioPath, duration: const Duration(seconds: 40),
+        ),
+        TrackInfo(
+          id: 'qa-gapless-b', title: 'Second local',
+          localFilePath: nextFile.path, duration: const Duration(seconds: 40),
+        ),
+      ],
+    );
+    await until('first gapless track playing',
+      () => current().currentTrack?.id == 'qa-gapless-a' &&
+          current().playbackState == PlaybackState.playing);
+    await player.seekTo(const Duration(seconds: 38));
+    await until('native gapless next track',
+      () => current().currentTrack?.id == 'qa-gapless-b' &&
+          current().playbackState == PlaybackState.playing,
+      seconds: 15);
+    debugPrint('Verified native local gapless queue transition');
   }, timeout: const Timeout(Duration(minutes: 4)));
 }

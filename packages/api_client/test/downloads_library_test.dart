@@ -143,6 +143,49 @@ void main() {
     expect(await File('${trackDir.path}/audio.m4a').readAsString(), 'new');
   });
 
+
+  test('invalidates a completed file when the authorized version changes', () async {
+    final track = BzTrack(
+      id: 'completed-replacement',
+      title: 'Updated master',
+      artist: 'Artist',
+      duration: const Duration(minutes: 2),
+    );
+    final trackDir = Directory('${root.path}/completed-replacement');
+    await trackDir.create();
+    await File('${trackDir.path}/audio.m4a')
+        .writeAsBytes(utf8.encode('old-master'));
+    await File('${trackDir.path}/meta.json').writeAsString(jsonEncode({
+      'ownerId': 'user-1',
+      'catalogTrackId': 'completed-replacement',
+      'assetVersion': 'master-old',
+    }));
+
+    var calls = 0;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      calls++;
+      request.response.statusCode = HttpStatus.ok;
+      request.response.add(utf8.encode('new-master'));
+      await request.response.close();
+    });
+    addTearDown(() async => server.close(force: true));
+
+    final ok = await library.download(
+      track,
+      downloadUrl: 'http://${server.address.address}:${server.port}/audio',
+      ownerId: 'user-1',
+      catalogTrackId: 'completed-replacement',
+      assetVersion: 'master-new',
+    );
+    expect(ok, isTrue);
+    expect(calls, 1);
+    expect(await File('${trackDir.path}/audio.m4a').readAsString(),
+        'new-master');
+    final saved = jsonDecode(await File('${trackDir.path}/meta.json').readAsString());
+    expect(saved['assetVersion'], 'master-new');
+  });
+
   test('lists only assets owned by the requested account', () async {
     final alice = Directory('${root.path}/bz_alice-track');
     final bob = Directory('${root.path}/bz_bob-track');

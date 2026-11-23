@@ -519,6 +519,18 @@ class PlayerController extends Notifier<PlayerState> {
       for (final item in queue) {
         _trackInfos[item.id] = item;
       }
+      final engine = _engine;
+      if (queue.length >= 2 && engine is GaplessLocalQueueEngine &&
+          engine.supportsGaplessLocalFiles && !_queue.shuffle &&
+          _queue.repeatMode == RepeatMode.off &&
+          queue.every((item) => item.localFilePath != null &&
+              item.localFilePath!.isNotEmpty &&
+              !item.localFilePath!.startsWith('content://'))) {
+        await _resolveAndPlayLocalPlaylist(
+          queue, entries, startIndex.clamp(0, queue.length - 1), engine,
+        );
+        return;
+      }
     } else {
       final entry = QueueEntry(
         entryId: 'qe-${DateTime.now().microsecondsSinceEpoch}',
@@ -549,6 +561,7 @@ class PlayerController extends Notifier<PlayerState> {
   /// and account sign-out so one user's media cannot continue into another
   /// account session.
   Future<void> stop() async {
+    _disarmNativeGapless();
     final requestId = ++_requestGeneration;
     final engine = _engine;
     final currentTrackId = state.currentTrack?.id;
@@ -822,6 +835,7 @@ class PlayerController extends Notifier<PlayerState> {
     TrackInfo info, {
     Duration initialPosition = Duration.zero,
   }) async {
+    _disarmNativeGapless();
     if (isMetadataOnlyTrackId(info.id) && info.localFilePath == null) return;
     final requestId = ++_requestGeneration;
     final previousTrackId = state.currentTrack?.id;

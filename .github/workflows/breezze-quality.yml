@@ -168,9 +168,9 @@ jobs:
 
   flutter_macos:
     name: Flutter macOS and iOS builds
-    # Pin Intel to avoid macos-latest ARM64 runner acquisition cancellations.
-    # This is CI scheduling infrastructure, not an app platform restriction.
-    runs-on: macos-15-intel
+    # video_player_avfoundation needs the Xcode 26 AVFoundation SDK.
+    # Use Intel to avoid macos-latest Apple Silicon runner allocation failures.
+    runs-on: macos-26-intel
     steps:
       - name: Checkout
         uses: actions/checkout@v4

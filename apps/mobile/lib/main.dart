@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio_media_kit/just_audio_media_kit.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app/bootstrap.dart';
 import 'core/auth/auth_session.dart';
@@ -11,6 +12,13 @@ import 'widgets/breezze_app_root.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Only the publishable key is embedded. Never ship the service-role key.
+  await Supabase.initialize(
+    url: const String.fromEnvironment('SUPABASE_URL',
+      defaultValue: 'https://djwvyjtebmsavhcrmhxf.supabase.co'),
+    anonKey: const String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY',
+      defaultValue: 'sb_publishable_ZloCmmQPo86OqHbH3Yqgsw_xZGPqSi3'),
+  );
   // Register the just_audio Linux/Windows implementations before the
   // global AudioPlayer is constructed by BreezzeAppRoot.
   JustAudioMediaKit.ensureInitialized();

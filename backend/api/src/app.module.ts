@@ -16,7 +16,6 @@ import { LyricsModule } from './lyrics/lyrics.module';
 import { RecommendationsModule } from './recommendations/recommendations.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { ReplayModule } from './replay/replay.module';
-import { SocialModule } from './social/social.module';
 import { ClassicalModule } from './classical/classical.module';
 import { AdminModule } from './admin/admin.module';
 import { ProvidersModule } from './providers/providers.module';
@@ -44,7 +43,6 @@ import { CloudflareAwareThrottlerGuard } from './cloudflare-aware-throttler.guar
     RecommendationsModule,
     OnboardingModule,
     ReplayModule,
-    SocialModule,
     ClassicalModule,
     AdminModule,
     ProvidersModule,

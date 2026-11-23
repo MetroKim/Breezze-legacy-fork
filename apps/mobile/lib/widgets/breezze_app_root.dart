@@ -1,5 +1,7 @@
 import 'dart:async';
 import '../../app/appearance_controller.dart';
+import '../../app/language_controller.dart';
+import 'package:flutter_localizations/flutter_localizations.dart' as flutter_i18n;
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,8 +16,8 @@ import '../../core/audio/background_audio.dart';
 import '../../core/database/migrate_to_drift.dart';
 import '../../core/database/outbox_sync_service.dart';
 import '../../features/player/player_controller.dart';
-import '../../features/authentication/auth_screen.dart';
 import '../../features/onboarding/onboarding_flow.dart';
+import '../../features/authentication/auth_screen.dart';
 import 'bz_shell.dart';
 
 /// Auth gate: auth screen until signed in, then the shell. On
@@ -47,7 +49,6 @@ class _BreezzeAppRootState extends ConsumerState<BreezzeAppRoot> with WidgetsBin
     _container!.read(playerControllerProvider.notifier).attachEngine(_audioEngine!);
     unawaited(_startBackgroundAudio());
     unawaited(migrateJsonStoresToDrift(_container!));
-    unawaited(_container!.read(authSessionProvider.notifier).restoreSession());
     ref.listenManual(authSessionProvider, (prev, next) {
       final before = prev is AuthSignedIn ? prev.userId : null;
       final after = next is AuthSignedIn ? next.userId : null;
@@ -56,6 +57,7 @@ class _BreezzeAppRootState extends ConsumerState<BreezzeAppRoot> with WidgetsBin
         _showOnboarding = false;
         _shellKey = GlobalKey();
         ref.invalidate(onboardingProvider);
+        ref.invalidate(appLanguageProvider);
         ref.read(outboxTerritoryProvider.notifier).state = 'WW';
       }
       if (prev is AuthSignedIn && before != after) {
@@ -69,6 +71,9 @@ class _BreezzeAppRootState extends ConsumerState<BreezzeAppRoot> with WidgetsBin
         _checkOnboardingNeeded(_accountVersion);
       }
     });
+    // Register the auth transition listener before applying the restored
+    // Supabase session: restoreSession may complete synchronously.
+    unawaited(_container!.read(authSessionProvider.notifier).restoreSession());
   }
 
   @override
@@ -130,9 +135,22 @@ class _BreezzeAppRootState extends ConsumerState<BreezzeAppRoot> with WidgetsBin
     // MaterialApp existed, leaving login/register without app navigation,
     // theme and inherited Material widgets.
     return MaterialApp(
+      // Reset the entire Navigator tree when the authenticated identity
+      // changes. A Back gesture after sign-out must never reveal a
+      // previously pushed Library, Account, or playback screen.
+      key: ValueKey<String>(auth is AuthSignedIn
+          ? 'signed-in:${auth.userId}'
+          : 'authentication-required'),
       title: 'Breezze',
       debugShowCheckedModeBanner: false,
       themeMode: ref.watch(appearanceProvider).valueOrNull ?? ThemeMode.system,
+      locale: Locale(ref.watch(appLanguageProvider).valueOrNull ?? 'en'),
+      supportedLocales: breezzeSupportedLocales,
+      localizationsDelegates: const [
+        flutter_i18n.GlobalMaterialLocalizations.delegate,
+        flutter_i18n.GlobalWidgetsLocalizations.delegate,
+        flutter_i18n.GlobalCupertinoLocalizations.delegate,
+      ],
       theme: bzLightTheme(),
       darkTheme: bzDarkTheme(),
       home: Builder(
@@ -179,6 +197,7 @@ class _BreezzeAppRootState extends ConsumerState<BreezzeAppRoot> with WidgetsBin
             return shell;
           }
 
+          // Authentication required before any navigation or playback screen.
           return const AuthScreen();
         },
       ),

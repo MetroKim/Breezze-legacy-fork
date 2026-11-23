@@ -197,10 +197,17 @@ class BreezzeApi {
     return data['following'] as bool;
   }
 
-  Future<void> followArtist(String key, bool following) async {
+  Future<List<Map<String, dynamic>>> followedArtists() async {
+    final data = await _get('/library/artists');
+    return _asMapList(data['items']);
+  }
+
+  Future<void> followArtist(String key, bool following, {String? name}) async {
     final path = '/library/artists/${Uri.encodeComponent(key)}';
     if (following) {
-      await _post(path, {});
+      await _post(path, {
+        if (name != null && name.trim().isNotEmpty) 'artistName': name.trim(),
+      });
     } else {
       await _delete(path);
     }
@@ -478,6 +485,9 @@ class BreezzeApi {
   @Deprecated('Use recordRecent; qualified plays require a playback session')
   Future<Map<String, dynamic>> recordPlay(String trackId) =>
       recordRecent(trackId);
+
+  Future<Map<String, dynamic>> yearlyReplay(int year) =>
+      _get('/replay/year/$year');
 
   Future<Map<String, dynamic>> replaySummary() => _get('/replay');
 

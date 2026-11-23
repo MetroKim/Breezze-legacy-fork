@@ -12,13 +12,38 @@ export class LibraryService {
     return { following: row !== null };
   }
 
-  async setFollowing(userId: string, artistKey: string, following: boolean) {
+  async listFollowedArtists(userId: string) {
+    const rows = await this.prisma.userFollowedArtist.findMany({
+      where: { userId },
+      orderBy: { artistKey: 'asc' },
+      take: 200,
+      select: { artistKey: true, artistName: true },
+    });
+    return { items: rows };
+  }
+
+  async setFollowing(
+    userId: string, artistKey: string, following: boolean,
+    artistName?: string,
+  ) {
     if (following) {
-      await this.prisma.userFollowedArtist.createMany({
-        data: [{ userId, artistKey }], skipDuplicates: true,
-      });
+      const name = artistName?.trim() || null;
+      if (name) {
+        // Re-following can fill in names for older records without duplicates.
+        await this.prisma.userFollowedArtist.upsert({
+          where: { userId_artistKey: { userId, artistKey } },
+          create: { userId, artistKey, artistName: name },
+          update: { artistName: name },
+        });
+      } else {
+        await this.prisma.userFollowedArtist.createMany({
+          data: [{ userId, artistKey }], skipDuplicates: true,
+        });
+      }
     } else {
-      await this.prisma.userFollowedArtist.deleteMany({ where: { userId, artistKey } });
+      await this.prisma.userFollowedArtist.deleteMany({
+        where: { userId, artistKey },
+      });
     }
     return { following };
   }

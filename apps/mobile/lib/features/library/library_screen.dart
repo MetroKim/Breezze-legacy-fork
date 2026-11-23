@@ -44,6 +44,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   List<UserPlaylist> _playlists = [];
   List<FavoriteTrack> _favorites = [];
   List<SavedAlbum> _albums = [];
+  List<Map<String, dynamic>> _followedArtists = [];
   var _loading = true;
 
   @override
@@ -59,8 +60,15 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     var playlists = await _playlistStore.load(ownerId);
     final albumStore = SavedAlbumStore();
     var savedAlbums = await albumStore.load(ownerId);
+    var followedArtists = <Map<String, dynamic>>[];
     final visibleSections = await LibrarySectionPreferencesStore().load(ownerId);
     if (auth is AuthSignedIn) {
+      try {
+        followedArtists =
+            await ref.read(authSessionProvider.notifier).api.followedArtists();
+      } catch (_) {
+        // Do not hide locally saved artists if the cloud is offline.
+      }
       try {
         await albumStore.syncWithCloud(
           ownerId,
@@ -92,6 +100,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       _favorites = favorites;
       _playlists = playlists;
       _albums = savedAlbums;
+      _followedArtists = followedArtists;
       _visibleSections = visibleSections;
       if (_selected != 'Downloaded' && !_visibleSections.contains(_selected)) {
         _selected = _allSections.firstWhere(_visibleSections.contains);
@@ -639,8 +648,30 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     for (final track in _favorites) {
       grouped.putIfAbsent(track.artist.trim().isEmpty ? 'Unknown artist' : track.artist, () => []).add(track);
     }
-    if (grouped.isEmpty) return _emptyState(theme, 'No artists yet', 'Save songs to build your artist library.');
-    final artists = grouped.entries.toList()..sort((a, b) => a.key.toLowerCase().compareTo(b.key.toLowerCase()));
+    // A Follow creates an artist-library item without requiring saved songs.
+    final followedNames = <String>{};
+    final canonicalByName = <String, String>{};
+    for (final entry in _followedArtists) {
+      final name = entry['artistName'];
+      final artistKey = entry['artistKey'];
+      if (name is! String || name.trim().isEmpty) continue;
+      final label = name.trim();
+      followedNames.add(label.toLowerCase());
+      grouped.putIfAbsent(label, () => <FavoriteTrack>[]);
+      if (artistKey is String && artistKey.startsWith('catalog:')) {
+        canonicalByName[label.toLowerCase()] = artistKey.substring(8);
+      }
+    }
+    if (grouped.isEmpty) {
+      return _emptyState(theme, 'No artists yet',
+          'Follow artists or save songs to build your artist library.');
+    }
+    final artists = grouped.entries.toList()..sort((a, b) {
+      final aFollowed = followedNames.contains(a.key.toLowerCase());
+      final bFollowed = followedNames.contains(b.key.toLowerCase());
+      if (aFollowed != bFollowed) return aFollowed ? -1 : 1;
+      return a.key.toLowerCase().compareTo(b.key.toLowerCase());
+    });
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(8, 4, 8, 150),
       itemCount: artists.length,
@@ -649,16 +680,27 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         return ListTile(
           leading: CircleAvatar(backgroundColor: theme.bzSurface2, child: BzSvgIcon(name: 'mic', color: theme.bzText1)),
           title: Text(entry.key),
-          subtitle: Text('${entry.value.length} saved songs'),
-          trailing: BzSvgIcon(name: 'chevron-right', color: theme.bzText2),
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => ArtistDetailScreen(
-                artist: entry.key,
-                savedTracks: entry.value,
-              ),
-            ),
+          subtitle: Text(
+            followedNames.contains(entry.key.toLowerCase())
+                ? entry.value.isEmpty
+                    ? 'Following'
+                    : 'Following · ${entry.value.length} saved songs'
+                : '${entry.value.length} saved songs',
           ),
+          trailing: BzSvgIcon(name: 'chevron-right', color: theme.bzText2),
+          onTap: () async {
+            await Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => ArtistDetailScreen(
+                  artist: entry.key,
+                  savedTracks: entry.value,
+                  canonicalArtistId:
+                      canonicalByName[entry.key.toLowerCase()],
+                ),
+              ),
+            );
+            if (mounted) await _refresh();
+          },
         );
       },
     );

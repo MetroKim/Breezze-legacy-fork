@@ -27,6 +27,8 @@ flutter create \
 # service declarations, not separate platform application implementations.
 python3 - "${APP_DIR}" <<'PY'
 import plistlib
+import os
+import re
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -87,6 +89,30 @@ if manifest_path.exists():
         ET.SubElement(intent, "action").set(
             android_attr("name"), "android.intent.action.MEDIA_BUTTON"
         )
+
+    # Supabase OAuth returns to Breezze using its own custom scheme.
+    main_activity = next((
+        node for node in application.findall("activity")
+        if (node.get(android_attr("name")) or "").endswith("MainActivity")
+    ), None)
+    if main_activity is not None:
+        deeplink_found = any(
+            data.get(android_attr("scheme")) == "io.breezze.app"
+            for filt in main_activity.findall("intent-filter")
+            for data in filt.findall("data")
+        )
+        if not deeplink_found:
+            main_activity.set(android_attr("launchMode"), "singleTop")
+            intent = ET.SubElement(main_activity, "intent-filter")
+            ET.SubElement(intent, "action").set(
+                android_attr("name"), "android.intent.action.VIEW")
+            ET.SubElement(intent, "category").set(
+                android_attr("name"), "android.intent.category.DEFAULT")
+            ET.SubElement(intent, "category").set(
+                android_attr("name"), "android.intent.category.BROWSABLE")
+            data = ET.SubElement(intent, "data")
+            data.set(android_attr("scheme"), "io.breezze.app")
+            data.set(android_attr("host"), "login-callback")
 
     tree.write(manifest_path, encoding="utf-8", xml_declaration=True)
 
@@ -151,6 +177,28 @@ ios_plist = app_dir / "ios" / "Runner" / "Info.plist"
 if ios_plist.exists():
     with ios_plist.open("rb") as source:
         values = plistlib.load(source)
+    schemes = values.setdefault("CFBundleURLTypes", [])
+    breezze_scheme = "io.breezze.app"
+    if not any(
+        breezze_scheme in item.get("CFBundleURLSchemes", [])
+        for item in schemes
+    ):
+        schemes.append({
+            "CFBundleTypeRole": "Editor",
+            "CFBundleURLSchemes": [breezze_scheme],
+        })
+    reversed_client_id = os.environ.get(
+        "GOOGLE_IOS_REVERSED_CLIENT_ID",
+        "com.googleusercontent.apps.990493102909-pg9d31ongdv2aghv53vb3uttgha9jnn3",
+    )
+    if reversed_client_id and not any(
+        reversed_client_id in item.get("CFBundleURLSchemes", [])
+        for item in schemes
+    ):
+        schemes.append({
+            "CFBundleTypeRole": "Editor",
+            "CFBundleURLSchemes": [reversed_client_id],
+        })
     modes = values.setdefault("UIBackgroundModes", [])
     if "audio" not in modes:
         modes.append("audio")
@@ -166,11 +214,30 @@ for entitlement_name in ("DebugProfile.entitlements", "Release.entitlements"):
         continue
     with entitlement_path.open("rb") as source:
         entitlements = plistlib.load(source)
+    if os.environ.get("BREEZZE_APPLE_SIGN_IN_ENABLED") == "1":
+        entitlements["com.apple.developer.applesignin"] = ["Default"]
     entitlements["com.apple.security.network.client"] = True
     entitlements["com.apple.security.files.user-selected.read-only"] = True
     with entitlement_path.open("wb") as target:
         plistlib.dump(entitlements, target)
 
-print("Configured Android release networking, media service, iOS background audio and macOS outbound networking.")
+if os.environ.get("BREEZZE_APPLE_SIGN_IN_ENABLED") == "1":
+    ios_entitlements = app_dir / "ios" / "Runner" / "Runner.entitlements"
+    with ios_entitlements.open("wb") as target:
+        plistlib.dump({"com.apple.developer.applesignin": ["Default"]}, target)
+    project_file = app_dir / "ios" / "Runner.xcodeproj" / "project.pbxproj"
+    if project_file.exists():
+        contents = project_file.read_text()
+        if "CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;" not in contents:
+            contents = re.sub(
+                r"(?m)^(\s*)PRODUCT_BUNDLE_IDENTIFIER = com\.breezze\.breezze;",
+                lambda m: m.group(1) +
+                    "CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;\n" +
+                    m.group(0),
+                contents,
+            )
+            project_file.write_text(contents)
+
+print("Configured release networking, media service and Supabase sign-in callbacks.")
 
 PY

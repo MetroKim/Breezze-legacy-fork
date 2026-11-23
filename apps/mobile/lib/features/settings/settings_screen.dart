@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/download_preferences.dart';
 import '../../app/appearance_controller.dart';
+import '../../app/language_controller.dart';
 import '../../app/search_history_store.dart';
 import '../../core/auth/auth_session.dart';
 import 'account_screen.dart';
@@ -85,6 +86,80 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
     timer.schedule(Duration(minutes: minutes));
   }
+  Future<void> _chooseLanguage() async {
+    var query = '';
+    final selected = ref.read(appLanguageProvider).valueOrNull ?? 'en';
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.sizeOf(sheetContext).height * 0.77,
+          child: StatefulBuilder(
+            builder: (sheetContext, setSheetState) {
+              final results = breezzeLanguages.where((language) =>
+                  language.name.toLowerCase().contains(query.toLowerCase()) ||
+                  language.code.toLowerCase().contains(query.toLowerCase())).toList();
+              return Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('App language',
+                            style: Theme.of(sheetContext).textTheme.titleLarge),
+                        const SizedBox(height: 4),
+                        const Text('English is the default. Some Breezze labels '
+                            'remain in English until translations are available.'),
+                        const SizedBox(height: 12),
+                        TextField(
+                          autofocus: true,
+                          decoration: const InputDecoration(
+                            hintText: 'Find a language',
+                            prefixIcon: Icon(Icons.search),
+                          ),
+                          onChanged: (value) => setSheetState(() => query = value),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: results.length,
+                      itemBuilder: (context, index) {
+                        final language = results[index];
+                        return ListTile(
+                          title: Text(language.name),
+                          subtitle: Text(language.code),
+                          selected: selected == language.code,
+                          trailing: selected == language.code
+                              ? const Icon(Icons.check) : null,
+                          onTap: () => Navigator.of(sheetContext).pop(language.code),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    if (!mounted || choice == null || choice == selected) return;
+    try {
+      await ref.read(appLanguageProvider.notifier).select(choice);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not save language preference.')),
+        );
+      }
+    }
+  }
+
   Future<void> _clearSearchHistory() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -376,7 +451,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ListTile(
               leading: const BzSvgIcon(name: 'globe'),
               title: const Text('App language'),
-              subtitle: const Text('Uses your device language until localized translations are available.'),
+              subtitle: Text(breezzeLanguageName(
+                ref.watch(appLanguageProvider).valueOrNull ?? 'en')),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _chooseLanguage,
             ),
           ]),
           _section(theme, 'Privacy & Data', [

@@ -14,6 +14,8 @@ import '../features/player/player_controller.dart';
 import '../features/search/search_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/settings/account_screen.dart';
+import '../app/language_controller.dart';
+import '../app/breezze_ui_strings.dart';
 
 /// Breezze's four-destination shell. Downloads live inside Library and
 /// Settings are reached from the profile surface; neither is a top-level tab.
@@ -61,6 +63,11 @@ class _BzHomeState extends ConsumerState<BzHome> {
         ref.read(homeTabHintProvider.notifier).state = -1;
       }
     });
+    final language = ref.watch(appLanguageProvider).valueOrNull ?? 'en';
+    final localizedTabs = [
+      for (final tab in _tabs)
+        _TabDestination(breezzeText(language, tab.label), tab.asset),
+    ];
     final player = ref.watch(playerControllerProvider);
     final hasPlayer = player.playbackState != PlaybackState.idle;
 
@@ -87,7 +94,7 @@ class _BzHomeState extends ConsumerState<BzHome> {
             children: [
               _DesktopNavigation(
                 index: _index,
-                tabs: _tabs,
+                tabs: localizedTabs,
                 onChanged: (i) => setState(() => _index = i),
                 onOpenAccount: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const AccountScreen()),
@@ -141,7 +148,7 @@ class _BzHomeState extends ConsumerState<BzHome> {
                     ],
                     _TabBar(
                       index: _index,
-                      tabs: _tabs,
+                      tabs: localizedTabs,
                       onChanged: (i) => setState(() => _index = i),
                     ),
                   ],
@@ -218,12 +225,12 @@ class _DesktopNavigation extends StatelessWidget {
               const Spacer(),
               Divider(color: theme.bzSeparator),
               _DesktopUtilityLink(
-                label: 'Account',
+                label: breezzeText(Localizations.localeOf(context).languageCode, 'Account'),
                 iconName: 'user-round',
                 onTap: onOpenAccount,
               ),
               _DesktopUtilityLink(
-                label: 'Settings',
+                label: breezzeText(Localizations.localeOf(context).languageCode, 'Settings'),
                 iconName: 'settings',
                 onTap: onOpenSettings,
               ),

@@ -81,7 +81,7 @@ abstract interface class AudioEngineAdapter {
 /// Optional native playlist capability. This is deliberately separate from
 /// AudioEngineAdapter: licensed remote streams still require per-track
 /// playback sessions, and cannot be speculatively stitched into a playlist.
-abstract interface class GaplessLocalQueueEngine {
+abstract interface class GaplessLocalQueueEngine implements AudioEngineAdapter {
   /// True only when the platform provides a verified native playlist.
   bool get supportsGaplessLocalFiles;
 

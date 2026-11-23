@@ -2,6 +2,7 @@ import 'package:breezze_api_client/breezze_api_client.dart';
 import 'package:breezze_audio_contracts/audio_contracts.dart';
 import 'package:breezze_design_system/breezze_design_system.dart';
 import 'package:material_ui/material_ui.dart' hide RepeatMode;
+import 'package:palette_generator/palette_generator.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/bootstrap.dart';
@@ -24,11 +25,34 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
   // Artwork-first playback and a dedicated lyric-reading mode share the
   // same player and synced lyric state, without duplicate audio sessions.
   bool _lyricsFocus = false;
+  Color? _artworkAccent;
+  int _artworkPaletteGeneration = 0;
 
   @override
   void initState() {
     super.initState();
     _loadLyrics();
+    _loadArtworkAccent(ref.read(playerControllerProvider).currentTrack?.artworkUrl);
+  }
+
+  void _loadArtworkAccent(String? rawUrl) {
+    final request = ++_artworkPaletteGeneration;
+    _artworkAccent = null;
+    final uri = Uri.tryParse(rawUrl ?? '');
+    if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) return;
+    // Share Flutter's image cache for artwork; stale palette responses must
+    // never tint a different song after a rapid Next/Previous gesture.
+    PaletteGenerator.fromImageProvider(
+      NetworkImage(uri.toString()), maximumColorCount: 12,
+    ).then((palette) {
+      if (!mounted || request != _artworkPaletteGeneration) return;
+      setState(() {
+        _artworkAccent = palette.vibrantColor?.color ??
+            palette.dominantColor?.color;
+      });
+    }).catchError((Object _) {
+      // Keep the neutral brand treatment when artwork is unavailable.
+    });
   }
 
   Future<void> _loadLyrics() async {
@@ -147,6 +171,12 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
   @override
   Widget build(BuildContext context) {
     ref.listen<String?>(
+      playerControllerProvider.select((state) => state.currentTrack?.artworkUrl),
+      (previous, next) {
+        if (previous != next) _loadArtworkAccent(next);
+      },
+    );
+    ref.listen<String?>(
       playerControllerProvider.select((state) => state.currentTrack?.id),
       (previous, next) {
         if (previous != next) _loadLyrics();
@@ -177,6 +207,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
     return Scaffold(
       body: BzAmbientBackdrop(
         artworkUrl: track.artworkUrl,
+        artworkAccent: _artworkAccent,
         child: SafeArea(
           child: Center(
             child: ConstrainedBox(

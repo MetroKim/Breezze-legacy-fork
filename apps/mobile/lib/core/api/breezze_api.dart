@@ -486,6 +486,9 @@ class BreezzeApi {
   Future<Map<String, dynamic>> recordPlay(String trackId) =>
       recordRecent(trackId);
 
+  Future<Map<String, dynamic>> yearlyReplay(int year) =>
+      _get('/replay/year/$year');
+
   Future<Map<String, dynamic>> replaySummary() => _get('/replay');
 
   Future<List<Map<String, dynamic>>> playlists() async =>

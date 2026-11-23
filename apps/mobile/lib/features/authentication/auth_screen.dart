@@ -1,4 +1,3 @@
-import '../search/search_screen.dart';
 import 'package:breezze_design_system/breezze_design_system.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -183,22 +182,24 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                 ),
               ),
               const SizedBox(height: 28),
-              OutlinedButton(
-                onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                    builder: (_) => Scaffold(appBar: AppBar(), body: const SearchScreen()))),
-                child: const Text('Browse music'),
-              ),
-              const SizedBox(height: 12),
               _socialButton(
-                label: const bool.fromEnvironment('BREEZZE_APPLE_SIGN_IN_ENABLED', defaultValue: false)
-                    ? 'Continue with Apple'
-                    : 'Apple Sign-In (coming soon)',
+                label: 'Continue with Apple',
                 isApple: true,
                 enabled: !busy &&
                     const bool.fromEnvironment('BREEZZE_APPLE_SIGN_IN_ENABLED',
                         defaultValue: false),
                 onPressed: () => _signInWith('apple'),
               ),
+              if (!const bool.fromEnvironment('BREEZZE_APPLE_SIGN_IN_ENABLED',
+                  defaultValue: false))
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    'Apple Sign-In will be available after activation.',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
               const SizedBox(height: 12),
               _socialButton(
                 label: 'Continue with Google',

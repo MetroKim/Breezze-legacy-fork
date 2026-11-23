@@ -7,6 +7,7 @@ import '../../app/appearance_controller.dart';
 import '../../app/search_history_store.dart';
 import '../../core/auth/auth_session.dart';
 import 'account_screen.dart';
+import '../authentication/auth_screen.dart';
 import 'help_support_screen.dart';
 import '../notifications/notifications_screen.dart';
 import '../player/sleep_timer_controller.dart';
@@ -126,19 +127,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _section(theme, 'Account', [
             ListTile(
               leading: BzBnoteMark(size: 28, color: theme.bzText1),
-              title: Text(email ?? 'Not signed in'),
-              subtitle: Text('Breezze — free for everyone',
+              title: Text(email ?? 'Your music, your way'),
+              subtitle: Text(email == null
+                  ? 'Sign in to sync your library across devices'
+                  : 'Breezze — free for everyone',
                   style: theme.textTheme.bodySmall),
               onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const AccountScreen()),
+                MaterialPageRoute(
+                  builder: (_) => email == null
+                      ? const AuthScreen(popOnSignIn: true)
+                      : const AccountScreen(),
+                ),
               ),
             ),
             ListTile(
               leading: BzSvgIcon(name: 'user-round'),
-              title: const Text('Account details and sessions'),
+              title: Text(email == null ? 'Sign in or create an account'
+                  : 'Account details and sessions'),
               trailing: BzSvgIcon(name: 'chevron-right', color: theme.bzText2),
               onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const AccountScreen()),
+                MaterialPageRoute(
+                  builder: (_) => email == null
+                      ? const AuthScreen(popOnSignIn: true)
+                      : const AccountScreen(),
+                ),
               ),
             ),
             ListTile(
@@ -149,6 +161,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 MaterialPageRoute(builder: (_) => const NotificationsScreen()),
               ),
             ),
+            if (email != null)
             ListTile(
               leading: BzSvgIcon(name: 'logout'),
               title: const Text('Sign out'),

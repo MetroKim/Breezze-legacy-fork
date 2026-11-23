@@ -481,9 +481,11 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                         onPressed: () => setState(
                           () => _revealPassword = !_revealPassword,
                         ),
-                        icon: Icon(_revealPassword
-                            ? Icons.visibility_off_outlined
-                            : Icons.visibility_outlined),
+                        icon: BzSvgIcon(
+                          name: _revealPassword ? 'eye-off' : 'eye',
+                          size: 20,
+                          color: theme.bzText2,
+                        ),
                       ),
                       onSubmitted: (_) => !busy ? _submit() : null,
                     ),

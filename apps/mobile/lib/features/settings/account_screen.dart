@@ -33,7 +33,8 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
   void initState() {
     super.initState();
     final session = ref.read(authSessionProvider.notifier);
-    if (session.usesAuth0Auth) {
+    if (session.usesAuth0Auth && !session.usesAuth0Embedded &&
+        ref.read(authSessionProvider) is AuthSignedIn) {
       _auth0LinkFlow = session.api.startAuth0Link()
           .catchError((Object _) => <String, dynamic>{});
     }
@@ -162,31 +163,88 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
     }
   }
 
+  /// Confirm the verified Auth0 identity without leaving Breezze in
+  /// embedded mode. Legacy hosted pairing remains available only when
+  /// the explicitly selected build mode requires it.
   Future<void> _linkAuth0() async {
     if (_saving) return;
+    final session = ref.read(authSessionProvider.notifier);
+    String? email;
+    String? password;
+    if (session.usesAuth0Embedded) {
+      email = _email;
+      if (email == null || email.isEmpty) {
+        setState(() => _error = 'Account details must load before linking.');
+        return;
+      }
+      password = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) {
+          var typedPassword = '';
+          return AlertDialog(
+            title: const Text('Link your Auth0 account'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('Sign in as $email to keep your existing playlists and library.'),
+                const SizedBox(height: 20),
+                TextField(
+                  obscureText: true,
+                  autofocus: true,
+                  autofillHints: const [AutofillHints.password],
+                  onChanged: (value) => typedPassword = value,
+                  decoration: const InputDecoration(
+                    labelText: 'Auth0 password',
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(typedPassword),
+                child: const Text('Link account'),
+              ),
+            ],
+          );
+        },
+      );
+      if (!mounted || password == null || password.isEmpty) return;
+    }
     setState(() { _saving = true; _error = null; });
     try {
-      final session = ref.read(authSessionProvider.notifier);
-      final prepared = await _auth0LinkFlow;
-      final expiry = prepared?['expiresAt'];
-      final expiresAt = expiry is String ? DateTime.tryParse(expiry) : null;
-      final ready = expiresAt != null &&
-          expiresAt.isAfter(DateTime.now().toUtc().add(const Duration(seconds: 15)));
-      await session.linkAuth0(
-        preparedFlow: ready ? prepared : await session.api.startAuth0Link(),
-      );
+      if (session.usesAuth0Embedded) {
+        await session.api.linkAuth0Embedded(email!, password!);
+      } else {
+        final prepared = await _auth0LinkFlow;
+        final expiry = prepared?['expiresAt'];
+        final expiresAt = expiry is String ? DateTime.tryParse(expiry) : null;
+        final ready = expiresAt != null &&
+            expiresAt.isAfter(DateTime.now().toUtc().add(const Duration(seconds: 15)));
+        await session.linkAuth0(
+          preparedFlow: ready ? prepared : await session.api.startAuth0Link(),
+        );
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Auth0 sign-in linked to your Breezze account')),
       );
     } catch (_) {
-      if (mounted) setState(() {
-        _error = 'Could not link Auth0. Verify that both accounts have the same email and retry.';
-      });
-    } finally {
       if (mounted) {
-        _auth0LinkFlow = ref.read(authSessionProvider.notifier).api.startAuth0Link()
-            .catchError((Object _) => <String, dynamic>{});
+        setState(() => _error =
+            'Could not link Auth0. Make sure both accounts use the same verified email.');
+      }
+    } finally {
+      password = null;
+      if (mounted) {
+        if (!session.usesAuth0Embedded) {
+          _auth0LinkFlow = session.api.startAuth0Link()
+              .catchError((Object _) => <String, dynamic>{});
+        }
         setState(() => _saving = false);
       }
     }
@@ -396,8 +454,10 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                   ListTile(
                     leading: const BzSvgIcon(name: 'settings'),
                     title: const Text('Link Auth0 sign-in'),
-                    subtitle: const Text(
-                        'Keep your library when switching from your existing Breezze account'),
+                    subtitle: Text(
+                        ref.read(authSessionProvider.notifier).usesAuth0Embedded
+                            ? 'Link securely without leaving Breezze'
+                            : 'Keep your library when switching from your existing Breezze account'),
                     trailing: const BzSvgIcon(name: 'chevron-right'),
                     onTap: _saving ? null : _linkAuth0,
                   ),

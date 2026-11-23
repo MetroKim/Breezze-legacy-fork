@@ -25,7 +25,7 @@ export class RecommendationsService {
     // never the editable country preference stored in the user's profile.
     if (!territory || !/^[A-Z]{2}$/.test(territory)) return [];
 
-    const [recent, favorites, listening, preference] = await Promise.all([
+    const [recent, favorites, listening, preference, followed] = await Promise.all([
       this.prisma.recentlyPlayed.findMany({
         where: { userId },
         orderBy: { playedAt: 'desc' },
@@ -49,6 +49,11 @@ export class RecommendationsService {
         where: { userId },
         select: { favoriteArtists: true },
       }),
+      this.prisma.userFollowedArtist.findMany({
+        where: { userId },
+        take: 100,
+        select: { artistKey: true, artistName: true },
+      }),
     ]);
 
     const excludedIds = new Set([
@@ -66,10 +71,21 @@ export class RecommendationsService {
           .filter(Boolean),
       ),
     ];
-    const preferredArtists = favoriteArtistNames.length > 0
+    // Following an artist is stronger, more intentional than an incidental play.
+    // The name survives across Apple/iTunes and canonical catalog IDs, while
+    // catalog:<id> follows can resolve directly to a canonical Artist row.
+    const followedNames = [...new Set(
+      followed.map((item) => item.artistName?.trim())
+        .filter((name): name is string => Boolean(name)),
+    )];
+    const followedCatalogIds = followed
+      .filter((item) => item.artistKey.startsWith('catalog:'))
+      .map((item) => item.artistKey.substring('catalog:'.length));
+    const lookupNames = [...new Set([...favoriteArtistNames, ...followedNames])];
+    const preferredArtists = lookupNames.length > 0
       ? await this.prisma.artist.findMany({
           where: {
-            name: { in: favoriteArtistNames, mode: 'insensitive' },
+            name: { in: lookupNames, mode: 'insensitive' },
           },
           select: { id: true, name: true },
         })
@@ -81,33 +97,63 @@ export class RecommendationsService {
       .map((name) => preferredByName.get(name.toLowerCase()))
       .filter((id): id is string => Boolean(id));
 
+    const followedArtistIds = [...new Set([
+      ...followedCatalogIds,
+      ...followedNames.map((name) => preferredByName.get(name.toLowerCase()))
+        .filter((id): id is string => Boolean(id)),
+    ])];
+
+    // Saved songs form a second strong signal independent of listening
+    // sessions; users with no plays yet can still discover similar artists.
     const artistCounts = new Map<string, number>();
-    if (listening.length > 0) {
-      const listenedTrackIds = listening.map((item) => item.trackId);
-      const listenedTracks = await this.prisma.track.findMany({
-        where: { id: { in: listenedTrackIds } },
+    const favoriteArtistCounts = new Map<string, number>();
+    const referenceTrackIds = [...new Set([
+      ...listening.map((item) => item.trackId),
+      ...favorites.map((item) => item.trackId),
+    ])];
+    if (referenceTrackIds.length > 0) {
+      const referenceTracks = await this.prisma.track.findMany({
+        where: { id: { in: referenceTrackIds } },
         select: { id: true, artistId: true },
       });
-      const artistByTrack = new Map(listenedTracks.map((track) => [track.id, track.artistId]));
+      const artistByTrack = new Map(
+        referenceTracks.map((track) => [track.id, track.artistId]),
+      );
       for (const event of listening) {
         const artistId = artistByTrack.get(event.trackId);
         if (artistId) {
           artistCounts.set(artistId, (artistCounts.get(artistId) ?? 0) + event._count.trackId);
         }
       }
+      for (const favorite of favorites) {
+        const artistId = artistByTrack.get(favorite.trackId);
+        if (artistId) {
+          favoriteArtistCounts.set(artistId,
+            (favoriteArtistCounts.get(artistId) ?? 0) + 1);
+        }
+      }
     }
+    const favoriteArtistIds = [...favoriteArtistCounts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 6).map(([artistId]) => artistId);
     const listenedArtistIds = [...artistCounts.entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .slice(0, 5)
-      .map(([artistId]) => artistId);
+      .slice(0, 6).map(([artistId]) => artistId);
+    // Stage 1: candidate recall from follows, explicit preferences,
+    // library affinity, and qualified listening events. Stronger signals
+    // get the first candidate window; stage 2 keeps artist diversity.
     const artistIds = [...new Set([
+      ...followedArtistIds,
       ...preferredArtistIds,
+      ...favoriteArtistIds,
       ...listenedArtistIds,
-    ])].slice(0, 8);
+    ])].slice(0, 12);
 
     if (artistIds.length === 0) {
       return this.popularFallback(territory, excludedIds);
     }
+    const followedArtistIdSet = new Set(followedArtistIds);
+    const favoriteArtistIdSet = new Set(favoriteArtistIds);
     const preferredArtistIdSet = new Set(preferredArtistIds);
 
     // Fetch a bounded candidate window per artist. A single globally ordered
@@ -119,7 +165,7 @@ export class RecommendationsService {
           artistId,
           id: { notIn: [...excludedIds] },
         },
-        orderBy: { title: 'asc' },
+        orderBy: [{ album: { releaseDate: 'desc' } }, { title: 'asc' }],
         take: 12,
         select: { id: true, artistId: true },
       }),
@@ -137,9 +183,13 @@ export class RecommendationsService {
     const personalized = await this.selectPlayable(
       rankedCandidates,
       territory,
-      (track) => preferredArtistIdSet.has(track.artistId)
-          ? 'Because you chose this artist'
-          : 'Because you listen to this artist',
+      (track) => followedArtistIdSet.has(track.artistId)
+          ? 'Because you follow this artist'
+          : preferredArtistIdSet.has(track.artistId)
+            ? 'Because you chose this artist'
+            : favoriteArtistIdSet.has(track.artistId)
+              ? 'More from your favorite artists'
+              : 'Because you listen to this artist',
     );
     // Known artists may have no playable tracks in this territory. Still show
     // available popular music instead of leaving the recommendation rail empty.

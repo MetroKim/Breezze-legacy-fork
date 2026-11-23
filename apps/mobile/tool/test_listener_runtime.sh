@@ -11,6 +11,8 @@ sed '/^  assets:/a\
 ' "$saved_manifest" > pubspec.yaml
 flutter pub get
 dart run build_runner build --delete-conflicting-outputs
+# Exercise the handoff race policy on both hosted platforms before launching native tests.
+flutter test test/features/video/video_handoff_policy_test.dart --reporter expanded
 live_args=()
 if [[ -n "${QA_PREVIEW_API_ORIGIN:-}" ]]; then
   live_args+=(--dart-define=QA_LIVE_PREVIEW=true "--dart-define=BREEZZE_API_URL=$QA_PREVIEW_API_ORIGIN")

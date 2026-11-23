@@ -543,7 +543,7 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
                             setState(() => _changingFollow = true);
                             try {
                               await ref.read(authSessionProvider.notifier).api
-                                  .followArtist(artistKey, !active);
+                                  .followArtist(artistKey, !active, name: artist);
                               if (mounted) ref.invalidate(_artistFollowing(artistKey));
                             } catch (_) {
                               if (context.mounted) {

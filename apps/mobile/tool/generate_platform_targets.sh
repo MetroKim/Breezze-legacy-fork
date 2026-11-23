@@ -187,7 +187,10 @@ if ios_plist.exists():
             "CFBundleTypeRole": "Editor",
             "CFBundleURLSchemes": [breezze_scheme],
         })
-    reversed_client_id = os.environ.get("GOOGLE_IOS_REVERSED_CLIENT_ID", "")
+    reversed_client_id = os.environ.get(
+        "GOOGLE_IOS_REVERSED_CLIENT_ID",
+        "com.googleusercontent.apps.990493102909-pg9d31ongdv2aghv53vb3uttgha9jnn3",
+    )
     if reversed_client_id and not any(
         reversed_client_id in item.get("CFBundleURLSchemes", [])
         for item in schemes

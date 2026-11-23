@@ -35,8 +35,8 @@ jobs:
           profile: pixel_6
           script: bash apps/mobile/tool/test_listener_runtime.sh emulator-5554
   ios:
-    # Avoid unreliable macos-latest Apple Silicon runner allocation.
-    runs-on: macos-15-intel
+    # Latest native video plugin needs Xcode 26; Intel runner avoids ARM64 queue stalls.
+    runs-on: macos-26-intel
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4

@@ -116,6 +116,7 @@ class AppLanguageController extends AsyncNotifier<String> {
     // Prefer the account's Supabase preference when signed in.
     // Offline fallback uses the device's last saved choice (English by default).
     final user = supa.Supabase.instance.client.auth.currentUser;
+    final storageKey = user == null ? _key : '$_key.${user.id}';
     if (user != null) {
       try {
         final data = await supa.Supabase.instance.client
@@ -125,7 +126,7 @@ class AppLanguageController extends AsyncNotifier<String> {
             .maybeSingle();
         final remote = data?['language'] as String?;
         if (remote != null && isBreezzeLanguage(remote)) {
-          await _storage.write(key: _key, value: remote);
+          await _storage.write(key: storageKey, value: remote);
           return remote;
         }
       } catch (_) {
@@ -133,7 +134,7 @@ class AppLanguageController extends AsyncNotifier<String> {
       }
     }
     try {
-      final local = await _storage.read(key: _key);
+      final local = await _storage.read(key: storageKey);
       return local != null && isBreezzeLanguage(local) ? local : 'en';
     } catch (_) {
       return 'en';
@@ -154,7 +155,8 @@ class AppLanguageController extends AsyncNotifier<String> {
           'updated_at': DateTime.now().toUtc().toIso8601String(),
         }, onConflict: 'id');
       }
-      await _storage.write(key: _key, value: code);
+      final storageKey = user == null ? _key : '$_key.${user.id}';
+      await _storage.write(key: storageKey, value: code);
       state = AsyncData(code);
     } catch (_) {
       state = previous;

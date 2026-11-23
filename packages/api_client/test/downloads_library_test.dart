@@ -37,6 +37,7 @@ void main() {
     await trackDir.create();
     final partial = File('${trackDir.path}/audio.part');
     await partial.writeAsBytes(utf8.encode('abc'));
+    await File('${trackDir.path}/audio.part.version').writeAsString('asset-v1');
 
     var receivedRange = '';
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -58,12 +59,88 @@ void main() {
       downloadUrl: 'http://${server.address.address}:${server.port}/audio',
       ownerId: 'user-1',
       catalogTrackId: 'catalog-resume',
+      assetVersion: 'asset-v1',
     );
 
     expect(ok, isTrue);
     expect(receivedRange, 'bytes=3-');
     expect(await File('${trackDir.path}/audio.m4a').readAsString(), 'abcdef');
     expect(await partial.exists(), isFalse);
+  });
+
+
+  test('discards old partial when asset identity is unavailable', () async {
+    final track = BzTrack(
+      id: 'changed-asset',
+      title: 'Changed master',
+      artist: 'Artist',
+      duration: const Duration(minutes: 2),
+    );
+    final trackDir = Directory('${root.path}/changed-asset');
+    await trackDir.create();
+    await File('${trackDir.path}/audio.part')
+        .writeAsBytes(utf8.encode('wrong-master'));
+    await File('${trackDir.path}/audio.part.version')
+        .writeAsString('old-master');
+
+    var requestedRange = false;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      requestedRange = request.headers.value('range') != null;
+      request.response.statusCode = HttpStatus.ok;
+      request.response.add(utf8.encode('new-master'));
+      await request.response.close();
+    });
+    addTearDown(() async => server.close(force: true));
+
+    final ok = await library.download(
+      track,
+      downloadUrl: 'http://${server.address.address}:${server.port}/audio',
+      ownerId: 'user-1',
+      catalogTrackId: 'changed-asset',
+    );
+
+    expect(ok, isTrue);
+    expect(requestedRange, isFalse);
+    expect(await File('${trackDir.path}/audio.m4a').readAsString(),
+        'new-master');
+    expect(await File('${trackDir.path}/audio.part.version').exists(), isFalse);
+  });
+
+  test('discards old partial when asset version changes', () async {
+    final track = BzTrack(
+      id: 'version-change',
+      title: 'Changed codec',
+      artist: 'Artist',
+      duration: const Duration(minutes: 2),
+    );
+    final trackDir = Directory('${root.path}/version-change');
+    await trackDir.create();
+    await File('${trackDir.path}/audio.part')
+        .writeAsBytes(utf8.encode('old'));
+    await File('${trackDir.path}/audio.part.version')
+        .writeAsString('asset-v1');
+
+    var requestedRange = false;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      requestedRange = request.headers.value('range') != null;
+      request.response.statusCode = HttpStatus.ok;
+      request.response.add(utf8.encode('new'));
+      await request.response.close();
+    });
+    addTearDown(() async => server.close(force: true));
+
+    final ok = await library.download(
+      track,
+      downloadUrl: 'http://${server.address.address}:${server.port}/audio',
+      ownerId: 'user-1',
+      catalogTrackId: 'version-change',
+      assetVersion: 'asset-v2',
+    );
+    expect(ok, isTrue);
+    expect(requestedRange, isFalse);
+    expect(await File('${trackDir.path}/audio.m4a').readAsString(), 'new');
   });
 
   test('lists only assets owned by the requested account', () async {

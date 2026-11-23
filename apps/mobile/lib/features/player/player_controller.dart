@@ -39,6 +39,10 @@ class PlayerController extends Notifier<PlayerState> {
   int _requestGeneration = 0;
   String? _autoAdvancedTrackId;
   Future<void> _engineOperations = Future<void>.value();
+  GaplessLocalQueueEngine? _gaplessEngine;
+  List<QueueEntry>? _gaplessEntries;
+  int? _gaplessIndex;
+  StreamSubscription<int?>? _gaplessIndexSub;
 
   String? _playbackSessionId;
   PlaybackSessionClient? _activeSessionClient;
@@ -261,6 +265,8 @@ class PlayerController extends Notifier<PlayerState> {
       if (currentTrackId != null) _scrobbles.onStop(currentTrackId);
       _positionSub?.cancel();
       _engineStateSub?.cancel();
+      _gaplessIndexSub?.cancel();
+      _disarmNativeGapless();
       _engine = null;
       _activeSource = null;
     });
@@ -273,7 +279,17 @@ class PlayerController extends Notifier<PlayerState> {
     _requestGeneration++;
     _positionSub?.cancel();
     _engineStateSub?.cancel();
+    _gaplessIndexSub?.cancel();
+    _disarmNativeGapless();
     _engine = engine;
+    if (engine is GaplessLocalQueueEngine) {
+      _gaplessIndexSub = engine.currentIndexStream.listen((index) {
+        if (index != null && identical(_engine, engine) &&
+            identical(_gaplessEngine, engine)) {
+          _syncNativeGaplessIndex(index);
+        }
+      });
+    }
 
     _positionSub = engine.positionStream.listen((pos) {
       if (!identical(_engine, engine)) return;
@@ -344,8 +360,11 @@ class PlayerController extends Notifier<PlayerState> {
     _requestGeneration++;
     _positionSub?.cancel();
     _engineStateSub?.cancel();
+    _gaplessIndexSub?.cancel();
     _positionSub = null;
     _engineStateSub = null;
+    _gaplessIndexSub = null;
+    _disarmNativeGapless();
     _engine = null;
     _activeSource = null;
   }

@@ -199,7 +199,7 @@ class BreezzeApi {
 
   Future<List<Map<String, dynamic>>> followedArtists() async {
     final data = await _get('/library/artists');
-    return _asMapList(data);
+    return _asMapList(data['items']);
   }
 
   Future<void> followArtist(String key, bool following, {String? name}) async {

@@ -180,6 +180,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Select Xcode 26 for Swift video_player compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          xcodes=(/Applications/Xcode_26*.app)
+          if (( ${#xcodes[@]} == 0 )); then
+            echo "Xcode 26 is required by the Flutter AVFoundation plugin" >&2
+            exit 1
+          fi
+          selected=$(printf '%s\n' "${xcodes[@]}" | sort | tail -n 1)
+          sudo xcode-select --switch "$selected/Contents/Developer"
+          xcodebuild -version
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:

@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/breezze-android-playlist-acceptance.yml
       - apps/mobile/integration_test/playlist_sync_on_emulator_test.dart
+      - apps/mobile/lib/core/api/breezze_api.dart
       - apps/mobile/integration_test/artist_pin_on_emulator_test.dart
       - apps/mobile/pubspec.yaml
       - apps/mobile/lib/app/playlist_store.dart

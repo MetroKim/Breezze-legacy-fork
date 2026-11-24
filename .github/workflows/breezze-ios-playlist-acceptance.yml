@@ -26,7 +26,8 @@ concurrency:
 jobs:
   simulator-acceptance:
     name: iPhone simulator offline and production cloud sync
-    runs-on: macos-latest
+    # Explicit Intel runner avoids current macOS ARM64 hosted-runner capacity failures.
+    runs-on: macos-15-intel
     timeout-minutes: 65
     steps:
       - uses: actions/checkout@v4

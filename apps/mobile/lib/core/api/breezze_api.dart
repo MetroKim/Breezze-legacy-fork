@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show kReleaseMode;
@@ -82,9 +83,26 @@ class BreezzeApi {
   }
 
   Future<Map<String, dynamic>> _get(String path) async {
+    // Retrying an idempotent GET is safe after a transient edge/network
+    // interruption. Never apply this retry to POST/PATCH/DELETE mutations.
+    final originalToken = accessToken;
     Future<http.Response> send() =>
-        _client.get(_uri(path), headers: _headers).timeout(const Duration(seconds: 10));
-    var response = await send();
+        _client.get(_uri(path), headers: _headers)
+            .timeout(const Duration(seconds: 10));
+    http.Response response;
+    try {
+      response = await send();
+    } on Exception catch (error) {
+      if ((error is! TimeoutException && error is! http.ClientException) ||
+          accessToken != originalToken) {
+        rethrow;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      // An account switch during the backoff must never replay the old read
+      // under a different listener's session.
+      if (accessToken != originalToken) rethrow;
+      response = await send(); // Exactly one retry; a second failure propagates.
+    }
     if (response.statusCode == 401 &&
         onUnauthorized != null &&
         await onUnauthorized!()) {

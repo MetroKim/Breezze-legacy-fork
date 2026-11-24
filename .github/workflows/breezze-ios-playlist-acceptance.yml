@@ -50,6 +50,30 @@ jobs:
         with:
           channel: stable
           cache: true
+      - name: Apply upstream Flutter iOS simulator log stream fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Flutter stable 3.50.1 does not contain flutter/flutter#193142.
+          # Pin the official merged upstream patch; keep the app on stable.
+          # This fixes VM-service discovery *before* test execution rather
+          # than skipping assertions or marking a launch timeout as passed.
+          patch_file="$RUNNER_TEMP/flutter-ios-log-stream-ready.patch"
+          curl --fail --location --retry 3 --silent --show-error \
+            "https://github.com/flutter/flutter/commit/c3ed85ef987759ee54a6bce275490cde2a238dc1.patch" \
+            --output "$patch_file"
+          cd "$FLUTTER_ROOT"
+          sdk_file="packages/flutter_tools/lib/src/ios/simulators.dart"
+          if grep -Fq "await logReader._ready.future;" "$sdk_file"; then
+            echo "Upstream VM-service log-reader fix is already in this SDK"
+          else
+            git apply --check --include="$sdk_file" "$patch_file"
+            git apply --include="$sdk_file" "$patch_file"
+            grep -Fq "await logReader._ready.future;" "$sdk_file"
+            # Invalidate compiled flutter_tools so the patched tool is used.
+            rm -f bin/cache/flutter_tools.snapshot bin/cache/flutter_tools.stamp
+            flutter --version
+          fi
       - name: Generate native iOS runner
         working-directory: apps/mobile
         run: bash tool/generate_platform_targets.sh

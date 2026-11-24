@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -105,4 +106,87 @@ void main() {
     expect(captured.url.path, '/api/v1/library/albums/321');
     expect(captured.headers['Authorization'], 'Bearer owner-a-access-token');
   });
+  test('transient GET timeout retries once with the same owner token', () async {
+    var calls = 0;
+    final api = BreezzeApi(
+      baseUrl: 'https://breezze.example.test',
+      client: MockClient((request) async {
+        calls++;
+        expect(request.method, 'GET');
+        expect(request.headers['Authorization'], 'Bearer owner-token');
+        if (calls == 1) throw TimeoutException('temporary edge timeout');
+        return http.Response(jsonEncode({'data': <Map<String, dynamic>>[
+          {'id': 'playlist-1', 'name': 'Library'},
+        ]}), 200);
+      }),
+    )..accessToken = 'owner-token';
+
+    final result = await api.playlists();
+    expect(result.single['id'], 'playlist-1');
+    expect(calls, 2);
+  });
+
+  test('repeated GET transport failure stops after one retry', () async {
+    var calls = 0;
+    final api = BreezzeApi(
+      baseUrl: 'https://breezze.example.test',
+      client: MockClient((_) async {
+        calls++;
+        throw http.ClientException('connection interrupted');
+      }),
+    );
+
+    await expectLater(api.playlists(), throwsA(isA<http.ClientException>()));
+    expect(calls, 2);
+  });
+
+  test('GET HTTP 503 does not retry provider errors', () async {
+    var calls = 0;
+    final api = BreezzeApi(
+      baseUrl: 'https://breezze.example.test',
+      client: MockClient((_) async {
+        calls++;
+        return http.Response('{"message":"UPSTREAM_UNAVAILABLE"}', 503);
+      }),
+    );
+
+    await expectLater(
+      api.playlists(),
+      throwsA(isA<BreezzeApiException>().having(
+        (error) => error.code, 'code', 'UPSTREAM_UNAVAILABLE',
+      )),
+    );
+    expect(calls, 1);
+  });
+
+  test('POST mutation is never retried after a timeout', () async {
+    var calls = 0;
+    final api = BreezzeApi(
+      baseUrl: 'https://breezze.example.test',
+      client: MockClient((_) async {
+        calls++;
+        throw TimeoutException('write response lost');
+      }),
+    );
+
+    await expectLater(api.createPlaylist('No duplicates'), throwsA(isA<TimeoutException>()));
+    expect(calls, 1);
+  });
+
+  test('account switch prevents a timed-out GET from replaying', () async {
+    var calls = 0;
+    late BreezzeApi api;
+    api = BreezzeApi(
+      baseUrl: 'https://breezze.example.test',
+      client: MockClient((_) async {
+        calls++;
+        api.accessToken = 'different-listener';
+        throw TimeoutException('old listener request failed');
+      }),
+    )..accessToken = 'original-listener';
+
+    await expectLater(api.playlists(), throwsA(isA<TimeoutException>()));
+    expect(calls, 1);
+  });
+
 }

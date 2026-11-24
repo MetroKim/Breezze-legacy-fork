@@ -174,7 +174,8 @@ jobs:
 
   flutter_macos:
     name: Flutter macOS and iOS builds
-    runs-on: macos-latest
+    # macos-latest currently selects ARM64 runners with acquisition failures.
+    runs-on: macos-15-intel
     steps:
       - name: Checkout
         uses: actions/checkout@v4
